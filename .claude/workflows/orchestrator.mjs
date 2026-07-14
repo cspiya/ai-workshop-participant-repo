@@ -1,27 +1,22 @@
 export const meta = {
   name: "orchestrator",
   description:
-    "Single-task, sequential v1 of the Linear-driven delivery loop (docs/agentic-operating-model.md §4). Picks the top eligible Todo issue in the Mini CRM project, dispatches a maker in an isolated worktree, has a fresh-context reviewer adjudicate it, bounces up to the limit, then serial-merges the approved branch to main and marks the issue Done. Pass args.dryRun=true to run ONLY the picker and log the intended plan with no side effects (no state writes, no dispatch, no merge).",
+    "Multi-task, parallel-develop + serialized-integrate v2 of the Linear-driven delivery loop (docs/agentic-operating-model.md §4). Picks up to MAX_MAKERS eligible Todo issues in the Mini CRM project, develops them CONCURRENTLY (each maker in its own isolated worktree on branch agent/<ISSUE-ID>, each adjudicated by an independent fresh-context reviewer with a per-task bounce loop), then integrates PASSED branches into main ONE AT A TIME (serialized merge + re-gate + push + Done), bouncing only the failing task on a conflict or red gate without blocking the others. Pass args.dryRun=true to run ONLY the picker and log every chosen task plus the intended plan with no side effects (no state writes, no dispatch, no merge).",
   phases: [
     {
       title: "Pick",
       detail:
-        "Query Linear for the single top eligible Todo issue (state Todo, no open blockedBy, not already in flight) in the Mini CRM project, ordered by priority then createdAt."
+        "Query Linear for up to MAX_MAKERS eligible Todo issues (state Todo, no open blockedBy, not already in flight) in the Mini CRM project, ordered by priority then createdAt."
     },
     {
-      title: "Make",
+      title: "Develop",
       detail:
-        "Set the issue In Progress, then dispatch the maker agent in an isolated worktree to implement to the acceptance criteria, run the full gate green, and push branch agent/<ISSUE-ID>."
-    },
-    {
-      title: "Review",
-      detail:
-        "Dispatch an independent fresh-context reviewer against the pushed branch; on Changes-Requested resume the same maker with the findings and re-review, up to the bounce limit, else escalate to needs-human."
+        "Develop the picked tasks concurrently: each runs its own per-task pipeline — set In Progress, dispatch a maker in an isolated worktree on branch agent/<ISSUE-ID>, have an independent fresh-context reviewer adjudicate, and bounce the same maker up to the limit — so a fast task's review proceeds while others still build."
     },
     {
       title: "Integrate",
       detail:
-        "Serial-merge the approved branch into main, re-run the full gate, push main, delete the branch, mark the issue Done and record evidence; a conflict or red gate bounces the task back to the maker."
+        "Serialize integration: merge PASSED branches into main one at a time, re-run the full gate on main, push, delete the branch and mark the issue Done with evidence; a conflict or red gate bounces only that task (Changes Requested + resume its maker, counting toward its bounce limit) without blocking or failing the other tasks."
     }
   ]
 };
@@ -31,6 +26,8 @@ const CONFIG = {
   projectId: (args && args.projectId) || "5b4c1325-ebce-470c-939d-18db3ee2274a",
   projectName: "Mini CRM (ai-workshop-participant-repo)",
   teamId: (args && args.teamId) || "cbff54b7-1224-4def-af34-249ce3e87113",
+  maxMakers:
+    args && typeof args.maxMakers === "number" ? args.maxMakers : 3,
   bounceLimit:
     args && typeof args.bounceLimit === "number" ? args.bounceLimit : 2,
   labels: {
@@ -43,17 +40,27 @@ const CONFIG = {
 const dryRun = !!(args && args.dryRun);
 
 // --- JSON Schemas for validated agent() returns ---
+// Picker now returns an ARRAY of up to MAX_MAKERS eligible tasks (or {none:true}).
 const PICKER_SCHEMA = {
   type: "object",
   additionalProperties: true,
   properties: {
     none: { type: "boolean" },
-    id: { type: "string" },
-    identifier: { type: "string" },
-    url: { type: "string" },
-    title: { type: "string" },
-    priority: { type: "number" },
-    createdAt: { type: "string" }
+    tasks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { type: "string" },
+          identifier: { type: "string" },
+          url: { type: "string" },
+          title: { type: "string" },
+          priority: { type: "number" },
+          createdAt: { type: "string" }
+        }
+      }
+    }
   },
   required: ["none"]
 };
@@ -105,7 +112,24 @@ const STATE_SCHEMA = {
   required: ["ok"]
 };
 
-// --- Prompt builders (concise; the maker/reviewer contracts live in their agent defs) ---
+// --- Concurrency helper -----------------------------------------------------
+// Develop fan-out uses the Workflow runtime's parallel() when it is provided as
+// a global (per docs/agentic-operating-model-plan.md), and falls back to
+// Promise.all otherwise. `typeof parallel` is safe even when parallel is not a
+// declared global — it evaluates to "undefined" rather than throwing. The
+// convention assumed here is parallel(arrayOfThunks); each thunk is a
+// zero-arg function returning a Promise, so a fast task's pipeline resolves
+// while slower ones are still running.
+async function fanOut(thunks) {
+  if (!thunks.length) return [];
+  if (typeof parallel === "function") {
+    return await parallel(thunks);
+  }
+  return await Promise.all(thunks.map((fn) => fn()));
+}
+
+// --- Prompt builders (concise; the maker/reviewer contracts live inline because
+//     these agents are dispatched as the built-in general-purpose agent) -------
 function pickerPrompt() {
   return [
     "You are the orchestrator's PICKER. Load the Linear MCP tools first (ToolSearch: mcp__linear__*), then read only — do NOT change any issue state or label.",
@@ -115,8 +139,11 @@ function pickerPrompt() {
     "  - no OPEN blockedBy relation (every blocking issue is Done), AND",
     "  - not already in flight (does NOT carry label agent:in-review or agent:changes-requested).",
     "Also EXCLUDE any issue carrying label agent:needs-human.",
-    "Order the eligible set by PRIORITY first (Urgent > High > Medium > Low > None; note Linear numeric priority 1=Urgent is highest, 0=None is lowest), then by createdAt ASCENDING, and take the single TOP issue.",
-    "Return JSON: if none eligible -> {\"none\": true}. Otherwise {\"none\": false, \"id\", \"identifier\", \"url\", \"title\", \"priority\", \"createdAt\"} for the chosen issue only."
+    "Order the eligible set by PRIORITY first (Urgent > High > Medium > Low > None; note Linear numeric priority 1=Urgent is highest, 0=None is lowest), then by createdAt ASCENDING.",
+    `Take the TOP ${CONFIG.maxMakers} eligible issues (fewer if fewer are eligible).`,
+    "Return JSON: if none eligible -> {\"none\": true}. Otherwise {\"none\": false, \"tasks\": [ {\"id\", \"identifier\", \"url\", \"title\", \"priority\", \"createdAt\"}, ... ]} listing the chosen issues in that priority-then-createdAt order — at most " +
+      CONFIG.maxMakers +
+      " entries."
   ].join("\n");
 }
 
@@ -216,7 +243,7 @@ function reviewerPrompt(picked, branch) {
 
 function integratorPrompt(picked, branch, makerResult) {
   return [
-    "You are the orchestrator's INTEGRATOR. Use Bash for git and load the Linear MCP (ToolSearch: mcp__linear__*) for the Linear write. You are the ONLY serialized merge into main.",
+    "You are the orchestrator's INTEGRATOR. Use Bash for git and load the Linear MCP (ToolSearch: mcp__linear__*) for the Linear write. You are the ONLY serialized merge into main — the orchestrator guarantees no other integrator runs concurrently, so you own main exclusively for this call.",
     `Integrate branch ${branch} into main for issue ${picked.identifier} (${picked.url}). Maker-reported head SHA: ${makerResult && makerResult.sha ? makerResult.sha : "see branch head"}.`,
     "Steps:",
     "1. git fetch origin --prune; check out main and fast-forward it to origin/main (git checkout main && git pull --ff-only).",
@@ -275,9 +302,151 @@ async function setLinearState({ issue, state, label, note }) {
   return res;
 }
 
+async function escalate(item, note) {
+  await setLinearState({
+    issue: item.task,
+    label: CONFIG.labels.needsHuman,
+    note
+  });
+}
+
+function blocked(item, reason, extra) {
+  return {
+    state: "BLOCKED",
+    item,
+    summary: Object.assign(
+      { id: item.id, status: "BLOCKED", reason, bounces: item.bounces },
+      extra || {}
+    )
+  };
+}
+
+// Run the review -> bounce loop for one task. Mutates item.bounces / item.maker.
+// Returns {state:'READY', item} once a reviewer PASSes, or a blocked() result
+// when the per-task bounce limit is exceeded or the maker cannot comply.
+async function runReviewLoop(item) {
+  while (true) {
+    await setLinearState({
+      issue: item.task,
+      label: CONFIG.labels.inReview,
+      note: "Orchestrator: dispatching independent reviewer for " + item.id + "."
+    });
+    const review = await agent(reviewerPrompt(item.task, item.branch), {
+      label: "reviewer:" + item.id,
+      phase: "Develop",
+      agentType: "general-purpose",
+      schema: REVIEW_SCHEMA
+    });
+    if (review && review.verdict === "PASS") {
+      return { state: "READY", item };
+    }
+    item.bounces += 1;
+    const findings = summarizeFindings(review);
+    if (item.bounces > CONFIG.bounceLimit) {
+      await escalate(
+        item,
+        `Bounce limit (${CONFIG.bounceLimit}) exceeded for ${item.id}. Findings:\n${findings}`
+      );
+      return blocked(item, "review-bounce-limit", { findings });
+    }
+    await setLinearState({
+      issue: item.task,
+      label: CONFIG.labels.changesRequested,
+      note: `Review round ${item.bounces}: CHANGES-REQUESTED — resuming the same maker for ${item.id}.`
+    });
+    const maker = await agent(
+      makerPrompt(item.task, "Reviewer findings to fix:\n" + findings),
+      {
+        label: "maker:" + item.id + ":fix" + item.bounces,
+        phase: "Develop",
+        agentType: "general-purpose",
+        isolation: "worktree",
+        schema: MAKER_SCHEMA
+      }
+    );
+    if (!maker || maker.status !== "DONE") {
+      await escalate(
+        item,
+        "Maker could not complete the requested changes for " + item.id + ". Escalating."
+      );
+      return blocked(item, "maker-failed-on-changes");
+    }
+    item.maker = maker;
+    // loop -> re-review the fixed branch
+  }
+}
+
+// Per-task DEVELOP pipeline (runs concurrently across tasks): In Progress ->
+// maker (own worktree + branch) -> review/bounce loop. Returns {state:'READY'}
+// (ready to integrate) or a blocked() result.
+async function developTask(task) {
+  const item = {
+    task,
+    id: task.identifier,
+    branch: "agent/" + task.identifier,
+    bounces: 0,
+    maker: null
+  };
+  await setLinearState({
+    issue: task,
+    state: "In Progress",
+    label: null,
+    note: "Orchestrator: starting work (parallel run)."
+  });
+
+  const maker = await agent(makerPrompt(task, null), {
+    label: "maker:" + item.id,
+    phase: "Develop",
+    agentType: "general-purpose",
+    isolation: "worktree",
+    schema: MAKER_SCHEMA
+  });
+
+  if (!maker) {
+    await escalate(item, "Maker agent died / timed out before returning a result for " + item.id + ".");
+    return blocked(item, "maker-died");
+  }
+  if (maker.status === "NOT_DEVELOPABLE" || maker.status === "BLOCKED") {
+    const reason = maker.reason || maker.assumptions || "see handoff / maker result";
+    await escalate(item, `Maker ${maker.status} for ${item.id}: ${reason}`);
+    return blocked(item, maker.status, { detail: reason });
+  }
+
+  item.branch = maker.branch || item.branch;
+  item.maker = maker;
+  return await runReviewLoop(item);
+}
+
+// Resume a task whose integration failed: fix on the branch, then re-review.
+// Returns {state:'READY', item} (re-queue for a serialized merge attempt) or a
+// blocked() result. Runs concurrently across bounced tasks between merge passes.
+async function reintegrateFix(item) {
+  const maker = await agent(
+    makerPrompt(
+      item.task,
+      "Resolve this integration failure so the branch merges cleanly into main and the full gate is green on the merged main:\n" +
+        (item.lastWhy || "integration failed")
+    ),
+    {
+      label: "maker:" + item.id + ":integ-fix" + item.bounces,
+      phase: "Integrate",
+      agentType: "general-purpose",
+      isolation: "worktree",
+      schema: MAKER_SCHEMA
+    }
+  );
+  if (!maker || maker.status !== "DONE") {
+    await escalate(item, "Maker could not resolve the integration failure for " + item.id + ". Escalating.");
+    return blocked(item, "maker-failed-on-integration-fix");
+  }
+  item.maker = maker;
+  item.branch = maker.branch || item.branch;
+  return await runReviewLoop(item);
+}
+
 // ============================ ORCHESTRATOR RUN ============================
 
-// 1. Pick
+// 1. Pick — up to MAX_MAKERS eligible tasks.
 phase("Pick");
 const picked = await agent(pickerPrompt(), {
   label: "picker",
@@ -285,197 +454,137 @@ const picked = await agent(pickerPrompt(), {
   schema: PICKER_SCHEMA
 });
 
-if (!picked || picked.none) {
+const tasks =
+  picked && !picked.none && Array.isArray(picked.tasks) ? picked.tasks : [];
+
+if (!tasks.length) {
   log("no eligible work");
-  return { status: "NO_ELIGIBLE_WORK", dryRun };
+  return { status: "NO_ELIGIBLE_WORK", dryRun, tasks: [] };
 }
+
 log(
-  `picked ${picked.identifier} (priority ${picked.priority}, created ${picked.createdAt}) — ${picked.title}`
+  `picked ${tasks.length} eligible task(s) (cap MAX_MAKERS=${CONFIG.maxMakers}): ` +
+    tasks.map((t) => t.identifier).join(", ")
 );
 
-// 2. Dry-run: log the plan and stop with no side effects
+// 2. Dry-run: log ALL chosen tasks and the plan, then stop with no side effects.
 if (dryRun) {
-  log("DRY RUN — no side effects. Intended single-task pipeline:");
-  log(`  1) Linear: ${picked.identifier} -> In Progress`);
-  log(`  2) Make:   dispatch maker (agentType:general-purpose, isolation:worktree) on branch agent/${picked.identifier}`);
-  log(`  3) Review: dispatch reviewer (agentType:general-purpose) on agent/${picked.identifier}; bounce up to ${CONFIG.bounceLimit} on CHANGES-REQUESTED (else agent:needs-human)`);
-  log(`  4) Integrate: serial-merge agent/${picked.identifier} -> main, re-gate, push, ${picked.identifier} -> Done + evidence comment`);
+  log(`DRY RUN — no side effects. ${tasks.length} eligible task(s), parallel-develop + serialized-integrate plan:`);
+  for (const t of tasks) {
+    log(`  - ${t.identifier} (priority ${t.priority}, created ${t.createdAt}) — ${t.title} -> branch agent/${t.identifier}`);
+  }
+  log(`  Develop: all ${tasks.length} CONCURRENTLY (maker general-purpose + worktree, then independent reviewer, bounce <= ${CONFIG.bounceLimit}).`);
+  log(`  Integrate: SERIALIZED — merge PASSED branches into main one at a time, re-gate, push, Done + evidence; conflict/red gate bounces only that task.`);
   return {
     status: "DRY_RUN",
-    picked: {
-      identifier: picked.identifier,
-      id: picked.id,
-      url: picked.url,
-      title: picked.title,
-      priority: picked.priority,
-      createdAt: picked.createdAt
-    },
-    plannedBranch: "agent/" + picked.identifier,
-    bounceLimit: CONFIG.bounceLimit
+    dryRun: true,
+    count: tasks.length,
+    maxMakers: CONFIG.maxMakers,
+    bounceLimit: CONFIG.bounceLimit,
+    tasks: tasks.map((t) => ({
+      identifier: t.identifier,
+      id: t.id,
+      url: t.url,
+      title: t.title,
+      priority: t.priority,
+      createdAt: t.createdAt,
+      plannedBranch: "agent/" + t.identifier
+    }))
   };
 }
 
-// 3. Set In Progress
-phase("Make");
-await setLinearState({
-  issue: picked,
-  state: "In Progress",
-  label: null,
-  note: "Orchestrator: starting work (single-task run)."
-});
+// 3. Develop all picked tasks CONCURRENTLY (each its own per-task pipeline).
+phase("Develop");
+const devResults = await fanOut(tasks.map((t) => () => developTask(t)));
 
-// 4. Maker (first attempt)
-let maker = await agent(makerPrompt(picked, null), {
-  label: "maker:" + picked.identifier,
-  phase: "Make",
-  agentType: "general-purpose",
-  isolation: "worktree",
-  schema: MAKER_SCHEMA
-});
-
-if (!maker) {
-  await setLinearState({
-    issue: picked,
-    label: CONFIG.labels.needsHuman,
-    note: "Maker agent died / timed out before returning a result."
-  });
-  return { status: "BLOCKED", reason: "maker-died", picked: picked.identifier };
+const finished = [];
+let queue = [];
+for (const r of devResults) {
+  if (r && r.state === "READY") {
+    queue.push(r.item);
+  } else if (r && r.summary) {
+    finished.push(r.summary);
+  } else {
+    finished.push({ id: "unknown", status: "BLOCKED", reason: "develop-returned-null" });
+  }
 }
+log(`develop complete: ${queue.length} ready to integrate, ${finished.length} blocked/escalated.`);
 
-if (maker.status === "NOT_DEVELOPABLE" || maker.status === "BLOCKED") {
-  const reason = maker.reason || maker.assumptions || "see handoff / maker result";
-  await setLinearState({
-    issue: picked,
-    label: CONFIG.labels.needsHuman,
-    note: `Maker ${maker.status}: ${reason}`
-  });
-  return {
-    status: "BLOCKED",
-    reason: maker.status,
-    detail: reason,
-    picked: picked.identifier
-  };
-}
-
-const branch = maker.branch || "agent/" + picked.identifier;
-
-// 5 + 6 + 7. Review / bounce / integrate loop (bounce cap per spec §4)
-let bounces = 0;
-let outcome = null;
-
-while (true) {
-  // Review
-  phase("Review");
-  await setLinearState({
-    issue: picked,
-    label: CONFIG.labels.inReview,
-    note: "Orchestrator: dispatching independent reviewer."
-  });
-
-  const review = await agent(reviewerPrompt(picked, branch), {
-    label: "reviewer:" + picked.identifier,
-    phase: "Review",
-    agentType: "general-purpose",
-    schema: REVIEW_SCHEMA
-  });
-
-  const passed = review && review.verdict === "PASS";
-
-  if (passed) {
-    // Integrate (serialized)
-    phase("Integrate");
-    const integ = await agent(integratorPrompt(picked, branch, maker), {
-      label: "integrator:" + picked.identifier,
+// 4. Integrate — SERIALIZED. Merge PASSED branches into main one at a time.
+//    A conflict / red gate bounces ONLY that task (resume its maker, re-review,
+//    re-queue) without blocking or failing the others. Rework between merge
+//    passes runs concurrently; the merges themselves never overlap.
+phase("Integrate");
+while (queue.length) {
+  const toRework = [];
+  for (const item of queue) {
+    const integ = await agent(integratorPrompt(item.task, item.branch, item.maker), {
+      label: "integrator:" + item.id,
       phase: "Integrate",
       schema: INTEG_SCHEMA
     });
 
     if (integ && integ.result === "MERGED") {
-      // The integrator itself set Done + posted the evidence comment (it holds the Linear MCP).
-      log(`integrated ${picked.identifier} -> main (${integ.sha || "merge commit"}); issue Done.`);
-      outcome = {
+      log(`integrated ${item.id} -> main (${integ.sha || "merge commit"}); issue Done.`);
+      finished.push({
+        id: item.id,
         status: "DONE",
-        picked: picked.identifier,
         sha: integ.sha || null,
-        bounces
-      };
-      break;
+        bounces: item.bounces
+      });
+      continue;
     }
 
-    // Integration failed (conflict or red gate) -> counts toward the bounce limit
-    bounces += 1;
-    const why = integ ? integ.result + (integ.note ? ": " + integ.note : "") : "integrator agent died";
-    if (bounces > CONFIG.bounceLimit) {
-      await setLinearState({
-        issue: picked,
-        label: CONFIG.labels.needsHuman,
-        note: `Integration still failing after ${CONFIG.bounceLimit} bounces (${why}). Escalating.`
+    // Conflict or red gate on integration -> counts toward this task's bounce limit.
+    item.bounces += 1;
+    const why = integ
+      ? integ.result + (integ.note ? ": " + integ.note : "")
+      : "integrator agent died";
+    if (item.bounces > CONFIG.bounceLimit) {
+      await escalate(
+        item,
+        `Integration still failing after ${CONFIG.bounceLimit} bounces for ${item.id} (${why}). Escalating.`
+      );
+      finished.push({
+        id: item.id,
+        status: "BLOCKED",
+        reason: "integration-bounce-limit",
+        detail: why,
+        bounces: item.bounces
       });
-      outcome = { status: "BLOCKED", reason: "integration-bounce-limit", detail: why, picked: picked.identifier, bounces };
-      break;
+      continue;
     }
     await setLinearState({
-      issue: picked,
+      issue: item.task,
       label: CONFIG.labels.changesRequested,
-      note: `Integration ${why} — resuming maker (bounce ${bounces}/${CONFIG.bounceLimit}).`
+      note: `Integration ${why} for ${item.id} — resuming maker (bounce ${item.bounces}/${CONFIG.bounceLimit}).`
     });
-    maker = await agent(
-      makerPrompt(picked, "Resolve this integration failure so the branch merges cleanly and the gate is green on main:\n" + why),
-      {
-        label: "maker:" + picked.identifier + ":fix" + bounces,
-        phase: "Make",
-        agentType: "general-purpose",
-        isolation: "worktree",
-        schema: MAKER_SCHEMA
-      }
-    );
-    if (!maker || maker.status !== "DONE") {
-      await setLinearState({
-        issue: picked,
-        label: CONFIG.labels.needsHuman,
-        note: "Maker could not resolve the integration failure. Escalating."
-      });
-      outcome = { status: "BLOCKED", reason: "maker-failed-on-integration-fix", picked: picked.identifier, bounces };
-      break;
-    }
-    continue; // re-review the fixed branch
+    item.lastWhy = why;
+    toRework.push(item);
   }
 
-  // CHANGES-REQUESTED (or reviewer died) -> bounce
-  bounces += 1;
-  const findings = summarizeFindings(review);
-  if (bounces > CONFIG.bounceLimit) {
-    await setLinearState({
-      issue: picked,
-      label: CONFIG.labels.needsHuman,
-      note: `Bounce limit (${CONFIG.bounceLimit}) exceeded. Findings:\n${findings}`
-    });
-    outcome = { status: "BLOCKED", reason: "review-bounce-limit", findings, picked: picked.identifier, bounces };
-    break;
+  if (!toRework.length) break;
+
+  // Rework the bounced tasks concurrently; those that pass review re-enter the
+  // serialized merge queue for the next pass.
+  const reworked = await fanOut(toRework.map((item) => () => reintegrateFix(item)));
+  const next = [];
+  for (const r of reworked) {
+    if (r && r.state === "READY") {
+      next.push(r.item);
+    } else if (r && r.summary) {
+      finished.push(r.summary);
+    } else {
+      finished.push({ id: "unknown", status: "BLOCKED", reason: "reintegrate-returned-null" });
+    }
   }
-  await setLinearState({
-    issue: picked,
-    label: CONFIG.labels.changesRequested,
-    note: `Review round ${bounces}: CHANGES-REQUESTED — resuming the same maker.`
-  });
-  maker = await agent(makerPrompt(picked, "Reviewer findings to fix:\n" + findings), {
-    label: "maker:" + picked.identifier + ":fix" + bounces,
-    phase: "Make",
-    agentType: "general-purpose",
-    isolation: "worktree",
-    schema: MAKER_SCHEMA
-  });
-  if (!maker || maker.status !== "DONE") {
-    await setLinearState({
-      issue: picked,
-      label: CONFIG.labels.needsHuman,
-      note: "Maker could not complete the requested changes. Escalating."
-    });
-    outcome = { status: "BLOCKED", reason: "maker-failed-on-changes", picked: picked.identifier, bounces };
-    break;
-  }
-  // loop -> re-review
+  queue = next;
 }
 
-log("orchestrator finished: " + outcome.status + " for " + picked.identifier);
-return outcome;
+const doneCount = finished.filter((f) => f.status === "DONE").length;
+log(
+  `orchestrator finished: ${doneCount}/${finished.length} DONE. ` +
+    finished.map((f) => f.id + "=" + f.status).join(", ")
+);
+
+return finished;
