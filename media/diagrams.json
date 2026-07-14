@@ -1,0 +1,34 @@
+{
+  "diagrams": [
+    {
+      "id": "fig-starter-boundary",
+      "visualQuestionId": "q-starter-overview",
+      "question": "Mi van készen a starterben, és mi hiányzik belőle szándékosan?",
+      "type": "relationship",
+      "disposition": "page-local",
+      "rendering": "inline-svg",
+      "diagramType": "relationship-map",
+      "takeaway": "Az oldal célja, fő összefüggései és elvárt résztvevői eredménye egyetlen térképen látható.",
+      "glossarySlugs": ["repository-rules"],
+      "figureSelector": "#fig-starter-boundary",
+      "svgSelector": "#fig-starter-boundary svg",
+      "textFallbackSelector": "#fig-starter-boundary-text",
+      "inlineSvgHash": "209c37c536a23f0d7053cf9afe5d6b90800fc3130e053e7a3eda1c71fe83cf68"
+    },
+    {
+      "id": "fig-starter-mely-retegek-adottak-es-mit",
+      "visualQuestionId": "q-starter-structure-1",
+      "question": "Mely rétegek adottak, és mit építesz te?",
+      "type": "structure",
+      "disposition": "page-local",
+      "rendering": "inline-svg",
+      "diagramType": "component-diagram",
+      "takeaway": "Az elemek határai és függőségei határozzák meg a működő egészet.",
+      "glossarySlugs": ["repository-rules"],
+      "figureSelector": "#fig-starter-mely-retegek-adottak-es-mit",
+      "svgSelector": "#fig-starter-mely-retegek-adottak-es-mit svg",
+      "textFallbackSelector": "#fig-starter-layers-text",
+      "inlineSvgHash": "f3b55750cc54941a34422993b80dcc2e51f33429a2faaa808f8a586d78c6952e"
+    }
+  ]
+}

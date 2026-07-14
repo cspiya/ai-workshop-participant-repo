@@ -1,0 +1,16 @@
+{
+  "$comment": "Copy to .mcp.json (gitignored). shadcn runs locally over stdio (no auth). v0 needs a V0_API_KEY environment variable (v0.app -> Settings -> API Keys); the placeholder below is expanded by Claude Code at startup.",
+  "mcpServers": {
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"]
+    },
+    "v0": {
+      "type": "http",
+      "url": "https://mcp.v0.dev",
+      "headers": {
+        "Authorization": "Bearer ${V0_API_KEY}"
+      }
+    }
+  }
+}
