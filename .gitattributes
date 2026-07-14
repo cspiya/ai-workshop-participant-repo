@@ -1,0 +1,4 @@
+# Normalize line endings: text files check out with LF in the working tree,
+# regardless of the OS autocrlf setting. Keeps agent-authored scripts free of
+# CR characters (the Workflow tool rejects control chars in a script).
+* text=auto eol=lf
