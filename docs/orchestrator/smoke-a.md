@@ -1,1 +1,0 @@
-Parallel smoke A OK.
