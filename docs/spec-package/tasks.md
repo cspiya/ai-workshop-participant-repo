@@ -8,7 +8,7 @@ small enough to review, and assigned exclusive file/module ownership where paral
 - Constitution: C1 ([constitution.md](constitution.md))
 - Spec: C3 / contacts-slice v1 ([spec.md](spec.md))
 - Plan: P1 ([plan.md](plan.md))
-- Human approval evidence: provisional APPROVED under product-owner delegation 2026-07-14; Csaba Piya to confirm on return.
+- Human approval evidence: APPROVED by Csaba Piya (product owner) 2026-07-14.
 
 ## Ordered tasks
 
@@ -93,8 +93,8 @@ PLAUSIBLE with a failing scenario each; do not fix — hand accepted findings ba
 - [x] Every check is an executable command, not a generic test label.
 - [x] Every evidence location is named before work starts.
 - [x] No unresolved decision or instructional placeholder remains; D-1…D-4 carry owned defaults; `N/A` items include a reason.
-- [x] Approved constitution, spec, and plan versions are recorded (C1 / C3 / P1, provisional pending confirmation).
-- [ ] A human has approved entry into the later implementation phase. _(product-owner confirmation on return, then launch the maker)_
+- [x] Approved constitution, spec, and plan versions are recorded (C1 / C3 / P1, Csaba Piya, 2026-07-14).
+- [x] A human has approved entry into the later implementation phase (Csaba Piya, 2026-07-14).
 
 ## Decision and deviation log
 

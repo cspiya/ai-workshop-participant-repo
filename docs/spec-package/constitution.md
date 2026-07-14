@@ -63,8 +63,8 @@ must obey. Keep it short, versioned, and owned. A feature cannot silently overri
 ## Change control
 
 - Constitution version: **C1**
-- Approved by: _pending — Csaba Piya (product owner)_
-- Approved at: _pending_
+- Approved by: Csaba Piya (product owner)
+- Approved at: 2026-07-14
 - Next review: 2026-07-14 (end of workshop day)
 - Supersedes: none (first version)
 
@@ -78,4 +78,4 @@ the constitution or the feature. The implementation agent must not invent an exc
 - [x] Real check commands and evidence location are known.
 - [x] Decision owners are named.
 - [x] No unresolved contradiction exists.
-- [ ] Human approval, version, and timestamp are recorded. _(awaiting product-owner sign-off)_
+- [x] Human approval, version, and timestamp are recorded (Csaba Piya, 2026-07-14).

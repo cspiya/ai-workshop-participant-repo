@@ -80,15 +80,15 @@ Use observable language and link detailed scenarios from [given-when-then.md](gi
 
 ## Open decisions
 
-Implementation cannot assume unresolved product behavior. Defaults below were set by the agent
-under the product owner's lunchtime delegation (2026-07-14) and are marked for confirmation.
+Implementation cannot assume unresolved product behavior. The decisions below were confirmed
+by the product owner (Csaba Piya) on 2026-07-14.
 
-| Decision | Owner | Deadline | Options and observable impact | Status |
+| Decision | Owner | Resolved | Chosen behavior | Status |
 |---|---|---|---|---|
-| D-1 Contact required fields | Csaba Piya | on return | Default: only `name` required; email/phone/linkedin optional. Alt: require ≥1 contact method. Impact: stricter create validation. | Assumed default — confirm |
-| D-2 Duplicate contacts | Csaba Piya | on return | Default: allowed (no uniqueness). Alt: warn/block on same name+email. Impact: extra check on create. | Assumed default — confirm |
-| D-3 Contact delete → interactions | Csaba Piya | on return | Default: cascade delete interactions (spec §14 `onDelete: Cascade`). Alt: block delete if interactions exist. Impact: AC-6 behavior. | Assumed default (matches spec §14) — confirm |
-| D-4 Date input timezone | Csaba Piya | on return | Default: interpret follow-up dates in Europe/Budapest. Alt: UTC. Impact: which day a follow-up lands on. | Assumed default — confirm |
+| D-1 Contact required fields | Csaba Piya | 2026-07-14 | Only `name` required; email/phone/linkedin optional. | Confirmed |
+| D-2 Duplicate contacts | Csaba Piya | 2026-07-14 | Allowed (no uniqueness constraint). | Confirmed |
+| D-3 Contact delete → interactions | Csaba Piya | 2026-07-14 | Cascade delete interactions (spec §14 `onDelete: Cascade`). | Confirmed |
+| D-4 Date input timezone | Csaba Piya | 2026-07-14 | Interpret follow-up dates in Europe/Budapest. | Confirmed |
 
 ## Builder restatement
 
@@ -104,13 +104,13 @@ Mismatch returns to specification; it is not corrected only in chat.
 
 ## Human spec gate
 
-Gate verdict: **APPROVED** _(prepared under product-owner delegation 2026-07-14; Csaba Piya to confirm on return)_
+Gate verdict: **APPROVED**
 
 - Contract version approved: C3 / contacts-slice v1
-- Approved by: Csaba Piya (product owner) — delegated preparation to agent; confirmation pending
-- Approved at: 2026-07-14 (provisional)
-- Remaining owned risks: open decisions D-1…D-4 stand on assumed defaults until confirmed.
-- Next action: product-owner confirms C3 (and D-1…D-4), then the plan gate (P1) and maker launch.
+- Approved by: Csaba Piya (product owner)
+- Approved at: 2026-07-14
+- Remaining owned risks: none open; D-1…D-4 confirmed above.
+- Next action: maker implements T0…T7; independent reviewer runs T8.
 
 The handoff is `C3-APPROVED-CONTRACT` only when the verdict is `APPROVED`, every
 acceptance criterion has evidence, and no ownerless product decision remains.

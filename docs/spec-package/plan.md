@@ -7,7 +7,7 @@ is missing, stale, or contradictory.
 
 - Spec ID/version: C3 / contacts-slice v1 ([spec.md](spec.md))
 - Constitution version: C1 ([constitution.md](constitution.md))
-- Approval evidence: spec gate APPROVED (provisional, product-owner delegation 2026-07-14)
+- Approval evidence: spec gate APPROVED by Csaba Piya (product owner) 2026-07-14
 - Acceptance criteria covered: AC-1 … AC-8
 - Scope/file ownership: `prisma/`, `src/lib/`, `src/app/contacts/`, `src/app/layout.tsx`, `src/components/contacts/`, `package.json`
 - Canonical engineering standard: `AGENTS.md` (Neon Postgres + Prisma + Zod + Server Actions; vertical slice; pre-production direct-to-`main`)
@@ -50,19 +50,19 @@ is missing, stale, or contradictory.
 
 ## Plan gate and handoff
 
-- [x] Spec and constitution versions are approved. _(C3 provisional, C1 draft — product-owner to confirm)_
+- [x] Spec and constitution versions are approved (C1 and C3, Csaba Piya, 2026-07-14).
 - [x] Plan does not add product behavior.
 - [x] Scope and exclusive file ownership are agreed.
 - [x] Every AC maps to a change and evidence.
 - [x] Actual check commands are identified.
 - [x] Reviewer roles are selected (independent fresh-context reviewer agent).
-- [ ] Human approved the plan or recorded an owned exception. _(awaiting product-owner sign-off)_
+- [x] Human approved the plan or recorded an owned exception (Csaba Piya, 2026-07-14).
 - [x] Every instructional placeholder is replaced, removed, or recorded as `N/A` with reason.
 
-- Plan verdict: **APPROVED** _(prepared under delegation 2026-07-14; Csaba Piya to confirm)_
-- Approved by/at: Csaba Piya (provisional) / 2026-07-14
+- Plan verdict: **APPROVED**
+- Approved by/at: Csaba Piya / 2026-07-14
 - Plan version: **P1**
-- Output plan version for [tasks.md](tasks.md): **P1-APPROVED-PLAN** (provisional)
+- Output plan version for [tasks.md](tasks.md): **P1-APPROVED-PLAN**
 
 Tasks may be generated only when the verdict is `APPROVED`, the plan version is recorded,
 and approval evidence names the human approver and timestamp.
