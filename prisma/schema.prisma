@@ -1,0 +1,72 @@
+// Prisma schema for the Mini CRM — Contacts slice foundation.
+// Models and enums follow the product spec §14 exactly.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Company {
+  id        Int       @id @default(autoincrement())
+  name      String
+  website   String?
+  industry  String?
+  notes     String?
+  contacts  Contact[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Contact {
+  id             Int           @id @default(autoincrement())
+  companyId      Int?
+  company        Company?      @relation(fields: [companyId], references: [id])
+  name           String
+  jobTitle       String?
+  email          String?
+  phone          String?
+  linkedinUrl    String?
+  status         ContactStatus @default(NEW)
+  nextFollowUpAt DateTime?
+  notes          String?
+  interactions   Interaction[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Interaction {
+  id         Int             @id @default(autoincrement())
+  contactId  Int
+  contact    Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  type       InteractionType
+  subject    String?
+  notes      String
+  happenedAt DateTime
+  createdAt  DateTime        @default(now())
+}
+
+enum ContactStatus {
+  NEW
+  CONTACTED
+  REPLIED
+  MEETING_SCHEDULED
+  IN_DISCUSSION
+  WON
+  LOST
+  ON_HOLD
+}
+
+enum InteractionType {
+  LINKEDIN_MESSAGE
+  EMAIL
+  PHONE_CALL
+  MEETING
+  EVENT
+  NOTE
+  OTHER
+}

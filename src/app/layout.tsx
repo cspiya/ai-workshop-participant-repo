@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,9 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  // Change these to your own site's title and description.
-  title: "My Website",
-  description: "Built from zero with AI-assisted development.",
+  title: "Mini CRM",
+  description: "A lightweight contact & relationship manager.",
 };
 
 export default function RootLayout({
@@ -28,7 +28,31 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <header className="border-b">
+          <nav className="mx-auto flex w-full max-w-5xl items-center gap-4 px-6 py-3">
+            <Link
+              href="/contacts"
+              className="font-heading text-base font-semibold"
+            >
+              Mini CRM
+            </Link>
+            <div className="flex items-center gap-4 text-sm">
+              {/* Dashboard and Companies are later slices — shown but inactive. */}
+              <span className="text-muted-foreground" aria-disabled>
+                Dashboard
+              </span>
+              <Link href="/contacts" className="font-medium hover:underline">
+                Contacts
+              </Link>
+              <span className="text-muted-foreground" aria-disabled>
+                Companies
+              </span>
+            </div>
+          </nav>
+        </header>
+        {children}
+      </body>
     </html>
   );
 }
