@@ -1,7 +1,7 @@
 export const meta = {
   name: "orchestrator",
   description:
-    "Multi-task, parallel-develop + serialized-integrate v2 of the Linear-driven delivery loop (docs/agentic-operating-model.md §4). Picks up to MAX_MAKERS eligible Todo issues in the Mini CRM project, develops them CONCURRENTLY (each maker in its own isolated worktree on branch agent/<ISSUE-ID>, each adjudicated by an independent fresh-context reviewer with a per-task bounce loop), then integrates PASSED branches into main ONE AT A TIME (serialized merge + re-gate + push + Done), bouncing only the failing task on a conflict or red gate without blocking the others. Pass args.dryRun=true to run ONLY the picker and log every chosen task plus the intended plan with no side effects (no state writes, no dispatch, no merge).",
+    "Multi-task, parallel-develop + serialized-integrate v3 of the Linear-driven delivery loop (docs/agentic-operating-model.md §4). An OUTER drain-then-stop loop repeats picker rounds — each round picks up to MAX_MAKERS eligible Todo issues in the Mini CRM project (a defensive .slice(0, MAX_MAKERS) caps the picker's output in code), develops them CONCURRENTLY (each maker in its own isolated worktree on branch agent/<ISSUE-ID>, each adjudicated by an independent fresh-context reviewer with a per-task bounce loop), then integrates PASSED branches into main ONE AT A TIME (serialized merge + re-gate + push + Done), bouncing only the failing task on a conflict or red gate without blocking the others. The run repeats rounds until the picker returns no eligible work (drained) OR the cumulative attempted-task count reaches PER_RUN_TASK_CAP, then stops cleanly. An agent CRASH (agent() returns null) is RETRIED up to RETRY times, then the task is set Blocked/Needs-human and the run CONTINUES — it never hangs and never treats a crash as a normal verdict. A true per-agent wall-clock timeout is N/A (the agent() hook exposes no timeout option); the null-return crash handling is the resilience mechanism. Pass args.dryRun=true to run ONLY the picker and log every chosen task plus the intended plan with no side effects (no state writes, no dispatch, no merge).",
   phases: [
     {
       title: "Pick",
@@ -21,7 +21,11 @@ export const meta = {
   ]
 };
 
-// --- Configuration (defaults from docs/orchestrator/config.md; overridable via args) ---
+// --- Configuration (defaults from docs/orchestrator/config.md §"Limits"; overridable via args) ---
+// All limits are read from CONFIG (seeded from the config.md defaults, each overridable via an
+// args.<name>), never hard-coded at the call sites. Source of the default values:
+// docs/orchestrator/config.md — MAX_MAKERS=3, BOUNCE_LIMIT=2, PER_RUN_TASK_CAP=10, RETRY=1,
+// AGENT_TIMEOUT=20m.
 const CONFIG = {
   projectId: (args && args.projectId) || "5b4c1325-ebce-470c-939d-18db3ee2274a",
   projectName: "Mini CRM (ai-workshop-participant-repo)",
@@ -30,6 +34,24 @@ const CONFIG = {
     args && typeof args.maxMakers === "number" ? args.maxMakers : 3,
   bounceLimit:
     args && typeof args.bounceLimit === "number" ? args.bounceLimit : 2,
+  // PER_RUN_TASK_CAP (config.md default 10): the maximum number of tasks a single orchestrator run
+  // will ATTEMPT. The outer drain loop repeats picker rounds (each up to MAX_MAKERS) until the
+  // picker returns no eligible work OR the cumulative attempted count reaches this cap.
+  perRunTaskCap:
+    args && typeof args.perRunTaskCap === "number" ? args.perRunTaskCap : 10,
+  // RETRY (config.md default 1): how many times a task's develop/integration pipeline is retried
+  // after an agent CRASH (an agent() hook returned null — the agent died) before the task is set to
+  // Blocked/Needs-human. A crash is NOT treated as a normal review verdict.
+  retry:
+    args && typeof args.retry === "number" ? args.retry : 1,
+  // AGENT_TIMEOUT (config.md default 20m): recorded for documentation ONLY. The Workflow runtime's
+  // agent() hook exposes NO timeout option, so a true per-agent wall-clock timeout is NOT
+  // implementable in-script (N/A — runtime limitation; see docs/handoffs/WEN-363.md). The
+  // resilience mechanism is instead the null-return CRASH handling in withCrashRetry() below: a
+  // hung agent that the runtime eventually abandons surfaces as a null return, which is retried up
+  // to CONFIG.retry times and then escalated. This field is never read for control flow.
+  agentTimeoutMinutes:
+    args && typeof args.agentTimeoutMinutes === "number" ? args.agentTimeoutMinutes : 20,
   labels: {
     inReview: "agent:in-review",
     changesRequested: "agent:changes-requested",
@@ -321,6 +343,48 @@ function blocked(item, reason, extra) {
   };
 }
 
+// A per-task pipeline reports an agent CRASH by returning this marker (state
+// "CRASHED") whenever an agent() hook returns null — i.e. the maker/reviewer
+// agent DIED rather than producing a result. A crash is deliberately kept
+// DISTINCT from a normal review verdict or a compliance BLOCKED: it must never
+// be silently treated as a CHANGES-REQUESTED bounce. withCrashRetry() catches
+// this marker and retries the whole pipeline up to CONFIG.retry times.
+function crashed(item, why) {
+  return { state: "CRASHED", item, why };
+}
+
+// Runs one task's pipeline thunk, retrying up to CONFIG.retry (RETRY, config.md
+// default 1) times when the pipeline reports an agent CRASH (crashed(): an
+// agent() hook returned null, so the agent died). The crash is NOT counted as a
+// bounce and NOT treated as a verdict. When RETRY is exhausted the task is set to
+// agent:needs-human (Blocked) with a reason and a blocked() result is returned so
+// the CALLER CONTINUES with the other tasks — the run never hangs and one crashed
+// agent never fails the others. NOTE on per-agent timeout: the Workflow agent()
+// hook exposes NO timeout option, so a true wall-clock per-agent timeout is
+// N/A — a runtime limitation (see docs/handoffs/WEN-363.md). This null-return
+// retry IS the resilience mechanism: a hung agent the runtime eventually abandons
+// surfaces here as a null return and is retried, then escalated.
+async function withCrashRetry(pipelineThunk, phaseLabel) {
+  let retries = 0;
+  while (true) {
+    const res = await pipelineThunk();
+    if (!res || res.state !== "CRASHED") {
+      return res; // READY or blocked() — a normal (non-crash) outcome.
+    }
+    if (retries >= CONFIG.retry) {
+      await escalate(
+        res.item,
+        `Agent crash in ${phaseLabel} for ${res.item.id} still failing after ${CONFIG.retry} RETRY (${res.why}). Escalating to needs-human.`
+      );
+      return blocked(res.item, "agent-crash", { detail: res.why });
+    }
+    retries += 1;
+    log(
+      `RETRY ${retries}/${CONFIG.retry} for ${res.item.id} after agent crash in ${phaseLabel}: ${res.why}`
+    );
+  }
+}
+
 // Run the review -> bounce loop for one task. Mutates item.bounces / item.maker.
 // Returns {state:'READY', item} once a reviewer PASSes, or a blocked() result
 // when the per-task bounce limit is exceeded or the maker cannot comply.
@@ -337,7 +401,13 @@ async function runReviewLoop(item) {
       agentType: "general-purpose",
       schema: REVIEW_SCHEMA
     });
-    if (review && review.verdict === "PASS") {
+    if (!review) {
+      // Reviewer agent DIED (null return) — this is a CRASH, not a verdict. Do
+      // NOT bounce (that would silently treat a dead agent as CHANGES-REQUESTED).
+      // Bubble up so withCrashRetry() retries the pipeline, then escalates.
+      return crashed(item, "reviewer agent died (null return) reviewing " + item.id);
+    }
+    if (review.verdict === "PASS") {
       return { state: "READY", item };
     }
     item.bounces += 1;
@@ -364,7 +434,12 @@ async function runReviewLoop(item) {
         schema: MAKER_SCHEMA
       }
     );
-    if (!maker || maker.status !== "DONE") {
+    if (!maker) {
+      // Maker agent DIED (null return) fixing the branch — a CRASH, not a
+      // compliance failure. Bubble up for RETRY rather than escalating directly.
+      return crashed(item, "maker agent died (null return) fixing " + item.id);
+    }
+    if (maker.status !== "DONE") {
       await escalate(
         item,
         "Maker could not complete the requested changes for " + item.id + ". Escalating."
@@ -403,8 +478,10 @@ async function developTask(task) {
   });
 
   if (!maker) {
-    await escalate(item, "Maker agent died / timed out before returning a result for " + item.id + ".");
-    return blocked(item, "maker-died");
+    // Maker agent DIED (null return) before returning a result — a CRASH. Bubble
+    // up so withCrashRetry() retries the whole develop pipeline (fresh maker) up
+    // to CONFIG.retry times, then escalates to needs-human.
+    return crashed(item, "maker agent died (null return) before returning a result for " + item.id);
   }
   if (maker.status === "NOT_DEVELOPABLE" || maker.status === "BLOCKED") {
     const reason = maker.reason || maker.assumptions || "see handoff / maker result";
@@ -435,7 +512,12 @@ async function reintegrateFix(item) {
       schema: MAKER_SCHEMA
     }
   );
-  if (!maker || maker.status !== "DONE") {
+  if (!maker) {
+    // Maker agent DIED (null return) resolving the integration failure — a CRASH.
+    // Bubble up for RETRY rather than escalating directly.
+    return crashed(item, "maker agent died (null return) resolving integration for " + item.id);
+  }
+  if (maker.status !== "DONE") {
     await escalate(item, "Maker could not resolve the integration failure for " + item.id + ". Escalating.");
     return blocked(item, "maker-failed-on-integration-fix");
   }
@@ -444,44 +526,146 @@ async function reintegrateFix(item) {
   return await runReviewLoop(item);
 }
 
-// ============================ ORCHESTRATOR RUN ============================
+// Run ONE picker round's worth of tasks end-to-end: develop them CONCURRENTLY
+// (each per-task pipeline wrapped in withCrashRetry so a dead agent is retried
+// then escalated, never treated as a verdict) and then SERIALIZE integration —
+// merge PASSED branches into main one at a time, re-gate, push, Done; a
+// conflict / red gate bounces ONLY that task without blocking the others.
+// Returns an array of finished summaries for the round. Unchanged from v2 apart
+// from the withCrashRetry wrappers; factored into a function so the outer
+// drain-then-stop loop can invoke it once per round.
+async function runRound(roundTasks) {
+  const finished = [];
 
-// 1. Pick — up to MAX_MAKERS eligible tasks.
-phase("Pick");
-const picked = await agent(pickerPrompt(), {
-  label: "picker",
-  phase: "Pick",
-  schema: PICKER_SCHEMA
-});
+  // Develop all round tasks CONCURRENTLY (each its own per-task pipeline).
+  phase("Develop");
+  const devResults = await fanOut(
+    roundTasks.map((t) => () => withCrashRetry(() => developTask(t), "develop"))
+  );
+  let queue = [];
+  for (const r of devResults) {
+    if (r && r.state === "READY") {
+      queue.push(r.item);
+    } else if (r && r.summary) {
+      finished.push(r.summary);
+    } else {
+      finished.push({ id: "unknown", status: "BLOCKED", reason: "develop-returned-null" });
+    }
+  }
+  log(`develop complete: ${queue.length} ready to integrate, ${finished.length} blocked/escalated.`);
 
-const tasks =
-  picked && !picked.none && Array.isArray(picked.tasks) ? picked.tasks : [];
+  // Integrate — SERIALIZED. Merge PASSED branches into main one at a time.
+  // A conflict / red gate bounces ONLY that task (resume its maker, re-review,
+  // re-queue) without blocking or failing the others. Rework between merge
+  // passes runs concurrently; the merges themselves never overlap.
+  phase("Integrate");
+  while (queue.length) {
+    const toRework = [];
+    for (const item of queue) {
+      const integ = await agent(integratorPrompt(item.task, item.branch, item.maker), {
+        label: "integrator:" + item.id,
+        phase: "Integrate",
+        schema: INTEG_SCHEMA
+      });
 
-if (!tasks.length) {
-  log("no eligible work");
-  return { status: "NO_ELIGIBLE_WORK", dryRun, tasks: [] };
+      if (integ && integ.result === "MERGED") {
+        log(`integrated ${item.id} -> main (${integ.sha || "merge commit"}); issue Done.`);
+        finished.push({
+          id: item.id,
+          status: "DONE",
+          sha: integ.sha || null,
+          bounces: item.bounces
+        });
+        continue;
+      }
+
+      // Conflict or red gate on integration -> counts toward this task's bounce limit.
+      item.bounces += 1;
+      const why = integ
+        ? integ.result + (integ.note ? ": " + integ.note : "")
+        : "integrator agent died";
+      if (item.bounces > CONFIG.bounceLimit) {
+        await escalate(
+          item,
+          `Integration still failing after ${CONFIG.bounceLimit} bounces for ${item.id} (${why}). Escalating.`
+        );
+        finished.push({
+          id: item.id,
+          status: "BLOCKED",
+          reason: "integration-bounce-limit",
+          detail: why,
+          bounces: item.bounces
+        });
+        continue;
+      }
+      await setLinearState({
+        issue: item.task,
+        label: CONFIG.labels.changesRequested,
+        note: `Integration ${why} for ${item.id} — resuming maker (bounce ${item.bounces}/${CONFIG.bounceLimit}).`
+      });
+      item.lastWhy = why;
+      toRework.push(item);
+    }
+
+    if (!toRework.length) break;
+
+    // Rework the bounced tasks concurrently; those that pass review re-enter the
+    // serialized merge queue for the next pass.
+    const reworked = await fanOut(
+      toRework.map((item) => () => withCrashRetry(() => reintegrateFix(item), "integration"))
+    );
+    const next = [];
+    for (const r of reworked) {
+      if (r && r.state === "READY") {
+        next.push(r.item);
+      } else if (r && r.summary) {
+        finished.push(r.summary);
+      } else {
+        finished.push({ id: "unknown", status: "BLOCKED", reason: "reintegrate-returned-null" });
+      }
+    }
+    queue = next;
+  }
+
+  return finished;
 }
 
-log(
-  `picked ${tasks.length} eligible task(s) (cap MAX_MAKERS=${CONFIG.maxMakers}): ` +
-    tasks.map((t) => t.identifier).join(", ")
-);
+// ============================ ORCHESTRATOR RUN ============================
 
-// 2. Dry-run: log ALL chosen tasks and the plan, then stop with no side effects.
+// DRY RUN — a single picker round: log ALL chosen tasks and the plan, then stop
+// with no side effects (no state writes, no maker/reviewer/integrator dispatch,
+// no merge). The defensive slice(0, MAX_MAKERS) still applies so the dry-run
+// preview never lists more than the concurrency cap.
 if (dryRun) {
-  log(`DRY RUN — no side effects. ${tasks.length} eligible task(s), parallel-develop + serialized-integrate plan:`);
-  for (const t of tasks) {
+  phase("Pick");
+  const pickedDry = await agent(pickerPrompt(), {
+    label: "picker",
+    phase: "Pick",
+    schema: PICKER_SCHEMA
+  });
+  const dryTasks = (
+    pickedDry && !pickedDry.none && Array.isArray(pickedDry.tasks) ? pickedDry.tasks : []
+  ).slice(0, CONFIG.maxMakers);
+  if (!dryTasks.length) {
+    log("no eligible work");
+    return { status: "NO_ELIGIBLE_WORK", dryRun: true, tasks: [] };
+  }
+  log(`DRY RUN — no side effects. ${dryTasks.length} eligible task(s) this round, parallel-develop + serialized-integrate plan:`);
+  for (const t of dryTasks) {
     log(`  - ${t.identifier} (priority ${t.priority}, created ${t.createdAt}) — ${t.title} -> branch agent/${t.identifier}`);
   }
-  log(`  Develop: all ${tasks.length} CONCURRENTLY (maker general-purpose + worktree, then independent reviewer, bounce <= ${CONFIG.bounceLimit}).`);
+  log(`  Develop: all ${dryTasks.length} CONCURRENTLY (maker general-purpose + worktree, then independent reviewer, bounce <= ${CONFIG.bounceLimit}).`);
   log(`  Integrate: SERIALIZED — merge PASSED branches into main one at a time, re-gate, push, Done + evidence; conflict/red gate bounces only that task.`);
+  log(`  Run bound: OUTER drain-then-stop loop repeats picker rounds until no eligible work OR PER_RUN_TASK_CAP=${CONFIG.perRunTaskCap} attempted; agent crash retried <= RETRY=${CONFIG.retry} then Blocked/Needs-human.`);
   return {
     status: "DRY_RUN",
     dryRun: true,
-    count: tasks.length,
+    count: dryTasks.length,
     maxMakers: CONFIG.maxMakers,
     bounceLimit: CONFIG.bounceLimit,
-    tasks: tasks.map((t) => ({
+    perRunTaskCap: CONFIG.perRunTaskCap,
+    retry: CONFIG.retry,
+    tasks: dryTasks.map((t) => ({
       identifier: t.identifier,
       id: t.id,
       url: t.url,
@@ -493,95 +677,69 @@ if (dryRun) {
   };
 }
 
-// 3. Develop all picked tasks CONCURRENTLY (each its own per-task pipeline).
-phase("Develop");
-const devResults = await fanOut(tasks.map((t) => () => developTask(t)));
-
+// LIVE — OUTER drain-then-stop loop. Repeat picker rounds (each up to MAX_MAKERS)
+// until the picker returns no eligible work (drained) OR the cumulative number of
+// ATTEMPTED tasks reaches PER_RUN_TASK_CAP. Each round's picker naturally cannot
+// re-pick tasks already handled: runRound() fully resolves every task to Done
+// (leaves Todo) or Blocked/Needs-human (carries agent:needs-human, which the
+// picker excludes) before the next round's picker runs, so no task is attempted
+// twice. Then stop cleanly with a summary log stating how many were processed and
+// why the run stopped (cap reached vs drained).
 const finished = [];
-let queue = [];
-for (const r of devResults) {
-  if (r && r.state === "READY") {
-    queue.push(r.item);
-  } else if (r && r.summary) {
-    finished.push(r.summary);
-  } else {
-    finished.push({ id: "unknown", status: "BLOCKED", reason: "develop-returned-null" });
+let attempted = 0;
+let completedRounds = 0;
+let pickerRounds = 0;
+let stopReason = "drained";
+while (true) {
+  if (attempted >= CONFIG.perRunTaskCap) {
+    stopReason = "cap-reached";
+    break;
   }
+  pickerRounds += 1;
+  phase("Pick");
+  const picked = await agent(pickerPrompt(), {
+    label: "picker:round" + pickerRounds,
+    phase: "Pick",
+    schema: PICKER_SCHEMA
+  });
+  // Defensive cap: never develop more than MAX_MAKERS in a round, regardless of
+  // what the picker returns (carry-forward from the O5 review — do not rely on
+  // the picker prompt alone).
+  const eligible = (
+    picked && !picked.none && Array.isArray(picked.tasks) ? picked.tasks : []
+  ).slice(0, CONFIG.maxMakers);
+  if (!eligible.length) {
+    stopReason = "drained";
+    break;
+  }
+  // Respect PER_RUN_TASK_CAP: never ATTEMPT more than the remaining budget, so the
+  // final round may run fewer than MAX_MAKERS to land exactly on the cap.
+  const remaining = CONFIG.perRunTaskCap - attempted;
+  const roundTasks = eligible.slice(0, remaining);
+  attempted += roundTasks.length;
+  log(
+    `round ${pickerRounds}: attempting ${roundTasks.length} task(s) [${attempted}/${CONFIG.perRunTaskCap} attempted, cap MAX_MAKERS=${CONFIG.maxMakers}]: ` +
+      roundTasks.map((t) => t.identifier).join(", ")
+  );
+
+  const roundFinished = await runRound(roundTasks);
+  for (const f of roundFinished) finished.push(f);
+  completedRounds += 1;
 }
-log(`develop complete: ${queue.length} ready to integrate, ${finished.length} blocked/escalated.`);
 
-// 4. Integrate — SERIALIZED. Merge PASSED branches into main one at a time.
-//    A conflict / red gate bounces ONLY that task (resume its maker, re-review,
-//    re-queue) without blocking or failing the others. Rework between merge
-//    passes runs concurrently; the merges themselves never overlap.
-phase("Integrate");
-while (queue.length) {
-  const toRework = [];
-  for (const item of queue) {
-    const integ = await agent(integratorPrompt(item.task, item.branch, item.maker), {
-      label: "integrator:" + item.id,
-      phase: "Integrate",
-      schema: INTEG_SCHEMA
-    });
-
-    if (integ && integ.result === "MERGED") {
-      log(`integrated ${item.id} -> main (${integ.sha || "merge commit"}); issue Done.`);
-      finished.push({
-        id: item.id,
-        status: "DONE",
-        sha: integ.sha || null,
-        bounces: item.bounces
-      });
-      continue;
-    }
-
-    // Conflict or red gate on integration -> counts toward this task's bounce limit.
-    item.bounces += 1;
-    const why = integ
-      ? integ.result + (integ.note ? ": " + integ.note : "")
-      : "integrator agent died";
-    if (item.bounces > CONFIG.bounceLimit) {
-      await escalate(
-        item,
-        `Integration still failing after ${CONFIG.bounceLimit} bounces for ${item.id} (${why}). Escalating.`
-      );
-      finished.push({
-        id: item.id,
-        status: "BLOCKED",
-        reason: "integration-bounce-limit",
-        detail: why,
-        bounces: item.bounces
-      });
-      continue;
-    }
-    await setLinearState({
-      issue: item.task,
-      label: CONFIG.labels.changesRequested,
-      note: `Integration ${why} for ${item.id} — resuming maker (bounce ${item.bounces}/${CONFIG.bounceLimit}).`
-    });
-    item.lastWhy = why;
-    toRework.push(item);
-  }
-
-  if (!toRework.length) break;
-
-  // Rework the bounced tasks concurrently; those that pass review re-enter the
-  // serialized merge queue for the next pass.
-  const reworked = await fanOut(toRework.map((item) => () => reintegrateFix(item)));
-  const next = [];
-  for (const r of reworked) {
-    if (r && r.state === "READY") {
-      next.push(r.item);
-    } else if (r && r.summary) {
-      finished.push(r.summary);
-    } else {
-      finished.push({ id: "unknown", status: "BLOCKED", reason: "reintegrate-returned-null" });
-    }
-  }
-  queue = next;
+// Nothing was ever eligible: preserve the prior NO_ELIGIBLE_WORK contract.
+if (attempted === 0) {
+  log("no eligible work");
+  return { status: "NO_ELIGIBLE_WORK", dryRun: false, tasks: [] };
 }
 
 const doneCount = finished.filter((f) => f.status === "DONE").length;
+log(
+  `drain-then-stop: processed ${attempted} task(s) across ${completedRounds} completed round(s); stopped — ` +
+    (stopReason === "cap-reached"
+      ? `PER_RUN_TASK_CAP=${CONFIG.perRunTaskCap} reached.`
+      : "no eligible work remaining (drained).")
+);
 log(
   `orchestrator finished: ${doneCount}/${finished.length} DONE. ` +
     finished.map((f) => f.id + "=" + f.status).join(", ")
