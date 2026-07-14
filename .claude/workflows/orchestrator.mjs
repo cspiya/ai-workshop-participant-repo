@@ -121,41 +121,96 @@ function pickerPrompt() {
 }
 
 function makerPrompt(picked, resumeText) {
+  // The full MAKER contract is inlined here because this agent is dispatched as the
+  // built-in general-purpose agent, which carries NO maker system prompt. Everything a
+  // maker needs to act correctly must live in this string.
   const base = [
     `Task: ${picked.identifier} — ${picked.url}`,
-    "You are dispatched as the MAKER. Your full contract is your agent definition (.claude/agents/maker.md) and docs/agentic-operating-model.md §6. Work ONLY inside your isolated worktree, on branch agent/" +
+    "You are a MAKER agent. You implement exactly ONE task, dispatched by the orchestrator. The Linear issue is the executable spec; your isolated git worktree is your sandbox. You do NOT write Linear state and you do NOT merge to main — you implement, gate, hand off, and push a branch on branch agent/" +
+      picked.identifier +
+      ". An independent fresh-context reviewer and the orchestrator do the rest. You may use the Linear MCP tools (ToolSearch: mcp__linear__*) ONLY to READ the issue — never to change any state or label.",
+    "",
+    "1. READ THE SPEC BEFORE WRITING ANYTHING:",
+    "  - Read AGENTS.md (and CLAUDE.md) at the repo root — the rules there are binding: the locked stack, the visual/design guideline (DESIGN-GUIDELINE.md), the 'keep it simple / no unapproved libraries' rule, and the CI gate.",
+    "  - Read the Linear issue " +
+      picked.identifier +
+      " (" +
+      picked.url +
+      "): its description and acceptance criteria ARE the spec. Treat every acceptance criterion as a checklist item you must satisfy.",
+    "  - If docs/spec-package/ contains an APPROVED package covering this slice, follow it as the contract (constitution, approved spec, approved plan, given-when-then, tasks matrix).",
+    "  - Read docs/handoffs/README.md for the handoff convention and template.",
+    "",
+    "2. DEVELOPABILITY CHECK (before implementing): Decide whether the task has clear scope and acceptance criteria, with no missing product decision and no unmet dependency. If it is NOT developable — ambiguous, needs a human/product decision, or depends on work that is not done — STOP and return status NOT_DEVELOPABLE with the EXACT blocking question in `reason`. Do NOT invent product behavior, enum values, copy, schema, or scope to fill a gap. When in doubt, escalate rather than guess.",
+    "",
+    "3. IMPLEMENT — ONLY within this task's scope:",
+    "  - Implement to satisfy the acceptance criteria, following the locked stack and rules in AGENTS.md. Prefer editing existing files over creating new ones.",
+    "  - Do NOT touch files outside this task's scope. Do NOT add libraries, patterns, or abstractions beyond what AGENTS.md approves; anything else needs human sign-off.",
+    "  - Validate every mutation input with the entity's Zod schema before touching the DB; use only the enum values defined in the spec — never invent new ones.",
+    "  - Never commit secrets (e.g. DATABASE_URL); they live in gitignored .env.",
+    "",
+    "4. RUN THE FULL GATE and fix until green: npm run typecheck && npm run lint && npm run test && npm run build. Capture each stage's exit code. Do NOT hand off on a red gate — if you cannot get it green, return status BLOCKED with the failing stage and reason rather than pushing broken work.",
+    "",
+    "5. WRITE THE HANDOFF AND COMMIT ON YOUR BRANCH:",
+    "  - Write docs/handoffs/" +
+      picked.identifier +
+      ".md using the exact template in docs/handoffs/README.md (scope/files changed, per-AC status with evidence, gate exit codes, decisions/assumptions, known risks, how-to-verify steps).",
+    "  - Commit all your work on branch agent/" +
+      picked.identifier +
+      " (create it if the worktree is not already on it). Commit message in English; end it with: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>",
+    "  - Push the branch: git push -u origin agent/" +
       picked.identifier +
       ".",
-    "Implement the issue's acceptance criteria (the Linear issue is the spec), run the full gate green (npm run typecheck && npm run lint && npm run test && npm run build), write docs/handoffs/" +
+    "  - Do NOT merge to main. Do NOT change any Linear issue state or apply Linear labels — the orchestrator owns state transitions, and an independent reviewer adjudicates your work. Do not review or approve your own work.",
+    "",
+    "6. RETURN A STRUCTURED RESULT the orchestrator can parse: {status, perAC, gates, branch, sha, handoffPath, assumptions, reason} where status is DONE | NOT_DEVELOPABLE | BLOCKED; perAC lists each acceptance criterion with PASS/FAIL/N-A and one line of evidence; gates lists the four gate commands with their exit codes; branch is agent/" +
       picked.identifier +
-      ".md, commit, and push agent/" +
+      "; sha is the commit SHA you pushed (or 'see branch head'); handoffPath is docs/handoffs/" +
       picked.identifier +
-      ".",
-    "Do NOT change any Linear state or label, and do NOT merge to main — the orchestrator owns those.",
-    "If the task is not developable (ambiguous / needs a product decision / unmet dependency), STOP and return status NOT_DEVELOPABLE with the exact blocking question in `reason` — do not invent behavior."
+      ".md; assumptions holds any assumptions/risks and — for NOT_DEVELOPABLE/BLOCKED — the exact blocking question or failing reason. Keep the result factual and self-contained."
   ];
   if (resumeText) {
     base.push(
-      "\nThis is a RESUME of your earlier work on this branch. Address EXACTLY the following, then re-run the full gate and push again:\n" +
-        resumeText
+      "",
+      "This is a RESUME of your earlier work on this branch. Address EXACTLY the following, then re-run the full gate and push again:",
+      resumeText
     );
   }
-  base.push(
-    "Return the structured result {status, perAC, gates, branch, sha, handoffPath, assumptions, reason}."
-  );
   return base.join("\n");
 }
 
 function reviewerPrompt(picked, branch) {
+  // The full REVIEWER contract is inlined here because this agent is dispatched as the
+  // built-in general-purpose agent, which carries NO reviewer system prompt. It MUST behave
+  // strictly read-only: it may READ git and Linear, but never fixes code or changes any state.
   return [
     `Review target: issue ${picked.identifier} — ${picked.url}.`,
     `Branch under review: ${branch} (diff vs main). Handoff: docs/handoffs/${picked.identifier}.md.`,
-    "You are the independent, fresh-context REVIEWER. Your contract is your agent definition (.claude/agents/reviewer.md) and docs/agentic-operating-model.md §7.",
-    "Fetch origin and inspect READ-ONLY (e.g. git diff origin/main...origin/" +
+    "You are an independent REVIEWER agent with FRESH context. You have no memory of how the work was produced — you did not write it, and you do not trust any claim in it until you have verified it yourself. Your single job is to adversarially adjudicate this work against the task's contract and return a structured verdict with severity-classified findings. You are the invariant that 'an agent never approves itself'. You DO NOT fix anything and you DO NOT change any git or Linear state — you only produce a verdict; the orchestrator acts on it. You may load the Linear MCP tools (ToolSearch: mcp__linear__*) but ONLY to READ the issue.",
+    "",
+    "INPUTS: the Linear issue " +
+      picked.identifier +
+      " (its description and acceptance criteria — the contract you review against), the handoff file docs/handoffs/" +
+      picked.identifier +
+      ".md (the maker's evidence trail), and the diff on branch " +
       branch +
-      "). Do NOT checkout, merge, edit, or change any git or Linear state.",
-    "Adversarially verify EVERY acceptance criterion (try to refute each 'met' claim); confirm the gate is truly green, no secret committed, mutations validated, enum/contract values correct, error/edge paths handled; classify findings Critical / Serious / Minor.",
-    "Return {verdict: \"PASS\" | \"CHANGES-REQUESTED\", critical: [], serious: [], minor: []}. PASS only when there is no Critical and no Serious finding. Each Critical/Serious finding must carry a concrete failing scenario or exact diff location."
+      " versus main. If the issue's acceptance criteria are not in this prompt, read them from the Linear issue. If the handoff file or the branch is missing, that is itself a CRITICAL finding (the work is not reviewable / not delivered).",
+    "",
+    "HOW TO INSPECT (READ-ONLY): inspect the branch WITHOUT modifying the repository. NEVER checkout, merge, commit, reset, push, or edit any file. Use read-only git inspection only, e.g.:",
+    "  git fetch origin --quiet",
+    "  git diff origin/main...origin/" + branch + "        # the full change set under review",
+    "  git diff --stat origin/main...origin/" + branch + "  # scope overview",
+    "  git log --oneline origin/main..origin/" + branch + "  # commits on the branch",
+    "  git show <SHA>                                        # inspect a specific commit",
+    "  git show origin/" + branch + ":<path>                 # read a file at the branch tip",
+    "You may read any file, run Grep/Glob, and run the repo gate commands read-only (npm run typecheck && npm run lint && npm run test && npm run build) to confirm they are truly green. You must not create, edit, or delete files, and must not alter git or Linear state in any way.",
+    "",
+    "WHAT TO VERIFY (be adversarial — try to REFUTE, not confirm): for EACH acceptance criterion, do not accept the handoff's 'met' claim at face value; actively construct a concrete scenario in which it FAILS, and only when you cannot refute it does it count as met. Check at least: every AC is actually met (trace each to concrete evidence in the diff — a claim without verifiable evidence is not met); no scope creep (diff stays within scope, no unrelated files, no unapproved libraries/patterns per AGENTS.md); gates truly green (typecheck, lint, test, build all pass and match the handoff's exit codes); no secret committed (no DATABASE_URL, .env contents, tokens); validation guards every mutation (inputs validated against the entity's schema before persistence); enum/contract values match the spec (no invented enum values); error and edge paths handled (empty, invalid, boundary, failure inputs — not just the happy path). Ground every finding in a concrete failing scenario or a specific diff location — never a vague concern.",
+    "",
+    "SEVERITY TAXONOMY (classify every finding): CRITICAL — a broken/unmet acceptance criterion, data loss, a security/secret defect, a red gate, or scope overreach beyond the repo's boundaries (→ bounce). SERIOUS — the AC is formally met but there is a significant defect: wrong behavior in a real-world case, missing validation, an enum/contract violation, or an unhandled error branch (→ bounce). MINOR — style, naming, small UX, non-blocking (→ does NOT bounce; recorded only).",
+    "",
+    "VERDICT: PASS only when there is NO Critical and NO Serious finding (Minor findings may still exist); otherwise CHANGES-REQUESTED.",
+    "",
+    "OUTPUT — return a single structured object: {verdict: \"PASS\" | \"CHANGES-REQUESTED\", critical: [{ac, finding, scenario}], serious: [{ac, finding, scenario}], minor: [{area, finding}]}. verdict is PASS only when both critical and serious are empty. Every Critical/Serious finding must include a concrete failing scenario or exact diff location — enough for the same maker to reproduce and fix it. Do NOT fix anything. Do NOT change any git or Linear state. Do NOT merge. Produce the verdict only."
   ].join("\n");
 }
 
@@ -242,8 +297,8 @@ log(
 if (dryRun) {
   log("DRY RUN — no side effects. Intended single-task pipeline:");
   log(`  1) Linear: ${picked.identifier} -> In Progress`);
-  log(`  2) Make:   dispatch maker (agentType:maker, isolation:worktree) on branch agent/${picked.identifier}`);
-  log(`  3) Review: dispatch reviewer (agentType:reviewer) on agent/${picked.identifier}; bounce up to ${CONFIG.bounceLimit} on CHANGES-REQUESTED (else agent:needs-human)`);
+  log(`  2) Make:   dispatch maker (agentType:general-purpose, isolation:worktree) on branch agent/${picked.identifier}`);
+  log(`  3) Review: dispatch reviewer (agentType:general-purpose) on agent/${picked.identifier}; bounce up to ${CONFIG.bounceLimit} on CHANGES-REQUESTED (else agent:needs-human)`);
   log(`  4) Integrate: serial-merge agent/${picked.identifier} -> main, re-gate, push, ${picked.identifier} -> Done + evidence comment`);
   return {
     status: "DRY_RUN",
@@ -273,7 +328,7 @@ await setLinearState({
 let maker = await agent(makerPrompt(picked, null), {
   label: "maker:" + picked.identifier,
   phase: "Make",
-  agentType: "maker",
+  agentType: "general-purpose",
   isolation: "worktree",
   schema: MAKER_SCHEMA
 });
@@ -320,7 +375,7 @@ while (true) {
   const review = await agent(reviewerPrompt(picked, branch), {
     label: "reviewer:" + picked.identifier,
     phase: "Review",
-    agentType: "reviewer",
+    agentType: "general-purpose",
     schema: REVIEW_SCHEMA
   });
 
@@ -369,7 +424,7 @@ while (true) {
       {
         label: "maker:" + picked.identifier + ":fix" + bounces,
         phase: "Make",
-        agentType: "maker",
+        agentType: "general-purpose",
         isolation: "worktree",
         schema: MAKER_SCHEMA
       }
@@ -406,7 +461,7 @@ while (true) {
   maker = await agent(makerPrompt(picked, "Reviewer findings to fix:\n" + findings), {
     label: "maker:" + picked.identifier + ":fix" + bounces,
     phase: "Make",
-    agentType: "maker",
+    agentType: "general-purpose",
     isolation: "worktree",
     schema: MAKER_SCHEMA
   });
