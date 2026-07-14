@@ -3,6 +3,7 @@ import { ContactStatus } from "@prisma/client";
 
 import {
   CONTACT_STATUSES,
+  companySchema,
   contactCreateSchema,
   contactUpdateSchema,
 } from "./validations";
@@ -127,5 +128,48 @@ describe("contactUpdateSchema", () => {
 
     const missing = contactUpdateSchema.safeParse({ name: "Anna" });
     expect(missing.success).toBe(false);
+  });
+});
+
+describe("companySchema", () => {
+  it("accepts a company with only a name (website optional, spec §11)", () => {
+    const result = companySchema.safeParse({ name: "Acme Logistics" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.name).toBe("Acme Logistics");
+      expect(result.data.website).toBeNull();
+      expect(result.data.industry).toBeNull();
+      expect(result.data.notes).toBeNull();
+    }
+  });
+
+  it("trims the name and rejects an empty one", () => {
+    const trimmed = companySchema.safeParse({ name: "  Acme  " });
+    expect(trimmed.success).toBe(true);
+    if (trimmed.success) expect(trimmed.data.name).toBe("Acme");
+
+    const empty = companySchema.safeParse({ name: "   " });
+    expect(empty.success).toBe(false);
+    if (!empty.success) expect(empty.error.issues[0].path).toEqual(["name"]);
+  });
+
+  it("accepts a valid website URL", () => {
+    const result = companySchema.safeParse({
+      name: "Acme",
+      website: "https://acme.example.com",
+    });
+    expect(result.success).toBe(true);
+    if (result.success)
+      expect(result.data.website).toBe("https://acme.example.com");
+  });
+
+  it("rejects a malformed website URL (spec §11)", () => {
+    const result = companySchema.safeParse({ name: "Acme", website: "x" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path[0] === "website")).toBe(
+        true,
+      );
+    }
   });
 });

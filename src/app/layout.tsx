@@ -38,16 +38,16 @@ export default function RootLayout({
               Mini CRM
             </Link>
             <div className="flex items-center gap-4 text-sm">
-              {/* Dashboard and Companies are later slices — shown but inactive. */}
+              {/* Dashboard is a later slice — shown but inactive. */}
               <span className="text-muted-foreground" aria-disabled>
                 Dashboard
               </span>
               <Link href="/contacts" className="font-medium hover:underline">
                 Contacts
               </Link>
-              <span className="text-muted-foreground" aria-disabled>
+              <Link href="/companies" className="font-medium hover:underline">
                 Companies
-              </span>
+              </Link>
             </div>
           </nav>
         </header>

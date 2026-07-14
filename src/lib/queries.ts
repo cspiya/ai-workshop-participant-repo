@@ -75,3 +75,27 @@ export async function listCompanies() {
 }
 
 export type CompanyOption = Awaited<ReturnType<typeof listCompanies>>[number];
+
+// List companies with their contact count for the companies list (spec §8.5).
+export async function listCompaniesWithCounts() {
+  return db.company.findMany({
+    orderBy: { name: "asc" },
+    include: { _count: { select: { contacts: true } } },
+  });
+}
+
+export type CompanyListItem = Awaited<
+  ReturnType<typeof listCompaniesWithCounts>
+>[number];
+
+// Fetch one company with its contacts for the company detail (spec §8.6).
+export async function getCompany(id: number) {
+  return db.company.findUnique({
+    where: { id },
+    include: {
+      contacts: { orderBy: [{ name: "asc" }, { id: "asc" }] },
+    },
+  });
+}
+
+export type CompanyDetail = NonNullable<Awaited<ReturnType<typeof getCompany>>>;

@@ -10,18 +10,33 @@ vi.mock("./db", () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    company: {
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    },
   },
 }));
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { createContact, deleteContact, updateContact } from "./actions";
+import {
+  createCompany,
+  createContact,
+  deleteCompany,
+  deleteContact,
+  updateCompany,
+  updateContact,
+} from "./actions";
 import { db } from "./db";
 
 const create = db.contact.create as unknown as ReturnType<typeof vi.fn>;
 const update = db.contact.update as unknown as ReturnType<typeof vi.fn>;
 const del = db.contact.delete as unknown as ReturnType<typeof vi.fn>;
+const createCo = db.company.create as unknown as ReturnType<typeof vi.fn>;
+const updateCo = db.company.update as unknown as ReturnType<typeof vi.fn>;
+const delCo = db.company.delete as unknown as ReturnType<typeof vi.fn>;
 
 function formOf(fields: Record<string, string>): FormData {
   const fd = new FormData();
@@ -151,5 +166,100 @@ describe("deleteContact (AC-6)", () => {
     del.mockRejectedValue(notFoundError());
     await expect(deleteContact(formOf({ id: "999" }))).resolves.toBeUndefined();
     expect(redirect).toHaveBeenCalledWith("/contacts");
+  });
+});
+
+describe("createCompany", () => {
+  it("persists a valid company and redirects to its detail", async () => {
+    createCo.mockResolvedValue({ id: 11 });
+
+    await createCompany(
+      {},
+      formOf({
+        name: "Acme Logistics",
+        website: "https://acme.example.com",
+        industry: "Logistics",
+      }),
+    );
+
+    expect(createCo).toHaveBeenCalledTimes(1);
+    const data = createCo.mock.calls[0][0].data;
+    expect(data.name).toBe("Acme Logistics");
+    expect(data.website).toBe("https://acme.example.com");
+    expect(data.industry).toBe("Logistics");
+    expect(revalidatePath).toHaveBeenCalledWith("/companies");
+    expect(redirect).toHaveBeenCalledWith("/companies/11");
+  });
+
+  it("persists a company with only a name (website optional)", async () => {
+    createCo.mockResolvedValue({ id: 12 });
+    await createCompany({}, formOf({ name: "Solo Co" }));
+    const data = createCo.mock.calls[0][0].data;
+    expect(data.name).toBe("Solo Co");
+    expect(data.website).toBeNull();
+  });
+
+  it("rejects an empty name and writes nothing", async () => {
+    const state = await createCompany({}, formOf({ name: "   " }));
+    expect(state.errors?.name).toBeTruthy();
+    expect(createCo).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed website URL and writes nothing", async () => {
+    const state = await createCompany(
+      {},
+      formOf({ name: "Acme", website: "not-a-url" }),
+    );
+    expect(state.errors?.website).toBeTruthy();
+    expect(createCo).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateCompany", () => {
+  it("persists an edit and redirects to the detail", async () => {
+    updateCo.mockResolvedValue({ id: 7 });
+
+    await updateCompany(
+      7,
+      {},
+      formOf({ name: "Renamed Co", industry: "Consulting" }),
+    );
+
+    expect(updateCo).toHaveBeenCalledTimes(1);
+    const call = updateCo.mock.calls[0][0];
+    expect(call.where).toEqual({ id: 7 });
+    expect(call.data.name).toBe("Renamed Co");
+    expect(redirect).toHaveBeenCalledWith("/companies/7");
+  });
+
+  it("rejects invalid input without writing", async () => {
+    const state = await updateCompany(7, {}, formOf({ name: "" }));
+    expect(state.errors?.name).toBeTruthy();
+    expect(updateCo).not.toHaveBeenCalled();
+  });
+
+  it("returns a not-found message for a missing id, not a crash", async () => {
+    updateCo.mockRejectedValue(notFoundError());
+    const state = await updateCompany(999, {}, formOf({ name: "Ghost Co" }));
+    expect(state.message).toBe("Company not found.");
+    expect(redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteCompany", () => {
+  it("deletes the company and redirects to the list", async () => {
+    delCo.mockResolvedValue({ id: 5 });
+    await deleteCompany(formOf({ id: "5" }));
+    expect(delCo).toHaveBeenCalledWith({ where: { id: 5 } });
+    expect(revalidatePath).toHaveBeenCalledWith("/companies");
+    expect(revalidatePath).toHaveBeenCalledWith("/contacts");
+    expect(redirect).toHaveBeenCalledWith("/companies");
+  });
+
+  it("ignores a missing id without crashing", async () => {
+    delCo.mockRejectedValue(notFoundError());
+    await expect(deleteCompany(formOf({ id: "999" }))).resolves.toBeUndefined();
+    expect(redirect).toHaveBeenCalledWith("/companies");
   });
 });
