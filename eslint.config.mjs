@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Agent git-worktrees live under .claude/worktrees/ and carry their own
+    // build output; never lint them.
+    ".claude/**",
   ]),
 ]);
 
