@@ -78,6 +78,15 @@ change is a human decision recorded here.
    This relaxation ends when the app first goes to production (issue F6): from
    that point switch back to the branch → PR → preview → review → merge flow so
    `main` stays releasable.
+9. **Spec gate:** no feature slice starts implementation without an APPROVED
+   five-file spec package in `docs/spec-package/` — constitution (`C1`), spec
+   (`C3-APPROVED-CONTRACT`), plan (`P1-APPROVED-PLAN`), given-when-then, and a
+   complete tasks coverage matrix where every acceptance criterion traces to a
+   scenario → owned task → exact check → evidence location. The agent prepares
+   and recommends a verdict; only the named human product owner records the final
+   APPROVED / CHANGES REQUESTED / BLOCKED. Implementation is a separate,
+   human-approved step run by the maker agent, reviewed by an independent
+   fresh-context reviewer agent (RUG).
 
 > This file grows during the workshop — every recurring correction you give
 > the agent belongs here as a rule.

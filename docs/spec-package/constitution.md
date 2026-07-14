@@ -32,7 +32,7 @@ must obey. Keep it short, versioned, and owned. A feature cannot silently overri
 - Supported compatibility/locale/time assumptions: Next.js 16 (App Router) + React 19 +
   TypeScript; Node 22 in CI. User-facing dates assume **Europe/Budapest**; the precise
   "overdue" / "due this week" follow-up semantics are product behavior and are owned at the
-  spec gate (`DECISION REQUIRED` there), not decided here.
+  spec gate (see spec Open decisions, D-4), not decided here.
 
 ## Canonical standards and real gates
 
