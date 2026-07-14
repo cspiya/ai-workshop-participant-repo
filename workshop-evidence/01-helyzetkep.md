@@ -1,42 +1,67 @@
-# 01 — Helyzetkép (repó-diagnózis)
+# Repo-helyzetkép
 
-**Dátum:** 2026-07-14 · **Repó:** `c:\zulu\ai-workshop\participant-repo` · **Módszer:** csak olvasás, kód nem módosult.
+_Dátum: 2026-07-14 · Módszer: olvasás + megfigyelhető parancseredmények, kód nem módosult._
 
-## Mi ez, és milyen állapotban van
+## A repo célja
+Workshop **résztvevői starter** — az agent-ready fejlesztési rendszer *technikai hordozója*, nem maga a rendszer. Minimál Next.js 16 (App Router) + TypeScript + Tailwind v4 + shadcn/ui projekt, amelyet a nap során missionnel, repo-szabályokkal, kanonikus standarddal, spec-kapuval, RUG-gal és mechanikus kapukkal kell megbízható operating modellé alakítani. (Forrás: `README.md`, `AGENTS.md`.)
 
-- **Technikai hordozó, nem agent-ready rendszer.** Next.js 16 (App Router) + TypeScript + Tailwind v4 + shadcn/ui minimál starter. Ezt a `README.md` explicit kimondja: „még **nem** agent-ready fejlesztési rendszer, csak a technikai hordozója".
-- **Bootstrap frissen kimásolva.** `.workshop-bootstrap.json` szerint a `participant-starter`-ből 2026-07-14 09:50-kor jött létre. A függőségek telepítve (`node_modules` megvan), a build legalább egyszer lefutott (`tsconfig.tsbuildinfo` jelen van).
-- **Verziózatlan.** `git`: nincs commit, nincs remote, minden fájl `untracked`. A `main` ág üres.
-- **CI kész, de inaktív.** `.github/workflows/ci.yml` (typecheck → lint → test → build) létezik, de amíg nincs GitHub-remote és push, nem fut.
-- **`gh` CLI hitelesítve** `cspiya` névvel, `repo` + `workflow` scope-pal — az agent tud repót létrehozni és pusholni.
-- **App-tartalom placeholder.** `src/app/page.tsx` az „It works!" demólap; `layout.tsx` metaadata „My Website"; egyetlen smoke-teszt (`src/lib/utils.test.ts`).
+## Amit az agent feltételezhet
+- A stack Next.js 16 + TS + Tailwind v4 + shadcn/ui, függőségek telepítve. (forrás: `package.json`, `node_modules/` jelenléte)
+- A mechanikus kapuk léteznek és **zölden futnak**: `typecheck`, `lint`, `test`. (forrás: lentebb, „Ellenőrzési mód" — ELLENŐRZÖTT)
+- CI-workflow bekötve: push/PR-re typecheck→lint→test→build. (forrás: `.github/workflows/ci.yml`)
+- A `gh` CLI hitelesített `cspiya` néven, `repo`+`workflow` scope-pal. (forrás: `gh auth status`)
+- Van remote, a repó **public**, a `main` követi az `origin/main`-t, working tree tiszta. (forrás: `git status -sb`, `gh repo view`)
+- Az MCP-konfig token nélküli, csak URL-eket tartalmaz. (forrás: `.mcp.json`)
+- Nincs perzisztencia: `.env` nincs, `DATABASE_URL` a nap DB-blokkjában jön. (forrás: `.env.example`, `.gitignore`)
 
-## Legalább három hiányzó információ
+## Amit az agent nem feltételezhet
+- Hogy van jóváhagyott spec — `docs/spec/` nem létezik; a KK-Regisztráció WHAT-ja nincs rögzítve.
+- Hogy a design-döntések eldőltek — `DESIGN-GUIDELINE.md` minden értéksora üres placeholder.
+- Hogy a Linear/Neon/Vercel/GitHub MCP ténylegesen hitelesített és hívható — ezt saját paranccsal nem ellenőriztem (lásd Ismeretlenek/2).
+- Hogy a CI a remote-on lefutott zöldre — a push megtörtént, de az Actions-eredményt nem ellenőriztem (lásd Ismeretlenek/3).
+- Az üzleti szemantikát (48h **kizáró** lemondási határ pontos értelmezése, duplikátum-védelem szabálya) — sehol nincs gépi formában.
 
-1. **Nincs saját, írható GitHub-repó (remote/commit/láthatóság).** A bootstrap kimásolt, de a verziózás nem történt meg. Ismeretlen: a **repónév**, a **láthatóság** (private/public), és hogy induljon-e branch-védelem. Enélkül nincs hová pusholni, és a CI-kapuk némák maradnak.
-2. **Nincs jóváhagyott spec-csomag** (`docs/spec/` nem létezik) a nap munkadarabjához, a **KK-Regisztrációhoz**. A WHAT nincs rögzítve: a 48 órás **kizáró** lemondási határ pontos szemantikája és a **duplikátum-védelem** kritériuma nincs gépileg ellenőrizhető formában. (README: „Feature csak az ember által elfogadott bootstrap-evidence után indulhat.")
-3. **Az MCP-szolgáltatások auth-állapota ismeretlen.** `.mcp.json` bekötve (`linear`, `github`, `neon`, `vercel`), de a Linear/Neon/Vercel csak első használatkor (`/mcp`) OAuth-ozik böngészőben; a GitHub MCP nem OAuth-ol, helyette `gh` CLI. Nem tudjuk, melyik szolgáltatás él ténylegesen.
-4. **A `DESIGN-GUIDELINE.md` értékei üresek** — brand/tone, színek, tipográfia, layout mind placeholder. A „HOGYAN nézzen ki" döntés nyitott.
-5. **Az `AGENTS.md` csak vázas működési szerződés.** Hiányzik a kanonikus mérnöki standard, a DoD/Definition of Done, a spec-kapu és a független review (RUG) orkesztrációja — a mechanikus kapukon (`typecheck`/`lint`/`test`) túl nincs bekötve az operating model.
-6. **Adatbázis-réteg még nincs.** `.env` üres, `DATABASE_URL` szándékosan a nap későbbi blokkjában kerül be — most nincs perzisztencia.
+## Ellenőrzési mód
 
-## Döntési határ: modell / agent / ember
+**(A) Mechanikus kapuk — ELLENŐRZÖTT**
+- Pontos parancs: `npm run typecheck && npm run lint && npm run test`
+- Várt, megfigyelhető eredmény: mindhárom 0 exit-kóddal zár, a teszt zöld.
+- Tényleges eredmény: `typecheck exit: 0`, `lint exit: 0`, `test` → `Test Files 1 passed (1)` / `Tests 1 passed (1)`, `exit: 0`.
+- Állapot: **ELLENŐRZÖTT**
 
-| Szereplő | Mit tesz | Hol a határa |
-|---|---|---|
-| **Modell** (LLM: Opus/Codex) | Szöveg- és kódgenerálás: spec-fogalmazvány, diff-javaslat, magyarázat, elemzés. | Nincs oldalhatás-felelőssége. **Nem** dönt scope-ról, **nem** választ üzleti szemantikát, **nem** hagy jóvá. Kimenete javaslat, amíg az agent nem hajtja végre. |
-| **Agent** (harness + toolok/MCP) | Végrehajtás a **jóváhagyott scope-on belül**: fájl olvasás/írás, parancsfuttatás (kapuk), MCP-hívások, PR nyitása; iterál a zöld kapukig. | **Nem** lép a jóváhagyott scope-on túl; **nem** módosítja a közös workshop-forrást; **nem** hoz irreverzibilis vagy kifelé ható lépést (repó publikálás, secret-kezelés, DB-provisioning, merge) **emberi jóváhagyás nélkül**. Hibánál a scope-on belül javít és megismétli a preflightot. |
-| **Ember** | Szándék és üzleti döntés; a spec elfogadása; jóváhagyás a **két kapunál** (bootstrap-evidence és design); scope engedélyezése. | Az övé minden **irreverzibilis / kifelé ható / költséggel járó** lépés végső engedélye: repó létrehozása és láthatósága, DB-branch provisioning, merge, fizetős szolgáltatás bekapcsolása. |
+**(B) MCP-szolgáltatások élő auth-ja — ISMERETLEN**
+- Pontos parancs: `/mcp` (Claude Code), majd pl. Linear `list_teams` / Neon `list_projects` egy benign hívással.
+- Várt, megfigyelhető eredmény: mindegyik szerver `connected`, és egy listázó hívás hibamentes választ ad.
+- Tényleges eredmény: saját, verifikáló paranccsal nem futtattam le ebben a diagnózisban.
+- Állapot: **ISMERETLEN**
+- Ha ismeretlen: döntési felelős **ember** (a böngészős OAuth-ot ő futtatja); tisztázandó: mely szolgáltatások élnek, és melyikre van szükség a következő lépéshez.
 
-**Kulcselv (README-ből):** „AI-integrálhatóság > feature-lista", és „ahol csak ember tud kattintani, ott megszakad az agent-lánc" — ezért az emberi döntéseket kapukban, nem ad-hoc kattintásokban kell tartani.
+## Ismeretlenek
+1. **Kérdés:** Mi a KK-Regisztráció jóváhagyott spec-csomagja (constitution/spec/given-when-then/plan/tasks)?
+   **Miért számít:** ez a WHAT; nélküle nincs elfogadási kritérium, és a README szerint feature nem indulhat.
+   **Válaszadó szerep:** ember (fogalmaz/jóváhagy), agent segít fogalmazványt írni.
+   **Addig tiltott feltételezés:** az agent nem találhatja ki a 48h-határ vagy a duplikátum-védelem szemantikáját.
 
-## A következő emberi döntés
+2. **Kérdés:** A Linear/Neon/Vercel/GitHub MCP ténylegesen hitelesített és hívható-e?
+   **Miért számít:** ezekre épül az issue=spec, DB-branch és preview lánc; ha nem élnek, megszakad az agent-lánc.
+   **Válaszadó szerep:** ember (OAuth böngészőben), majd agent egy benign listázó hívással verifikál.
+   **Addig tiltott feltételezés:** az agent nem feltételezheti, hogy bármelyik MCP-hívás sikerülni fog.
 
-**A saját, írható GitHub-repó paramétereinek megadása és a verziózás engedélyezése.**
+3. **Kérdés:** A CI a remote-on zöldre futott-e az initial push után?
+   **Miért számít:** a merge-kapuk csak akkor védenek, ha a workflow valóban lefut és zöld.
+   **Válaszadó szerep:** agent ellenőrizheti (`gh run list`), az eredményt ember veszi tudomásul.
+   **Addig tiltott feltételezés:** a lokálisan zöld kapuk ≠ a remote CI zöld.
 
-Konkrétan három, egyszerre eldöntendő pont:
-1. **Repónév** (pl. `wshp-ai-dev-participant`),
-2. **Láthatóság** — javaslat: **private**,
-3. Engedély, hogy az agent **most** inicializálja a git-commitot és a `gh` CLI-vel létrehozza a remote-ot + pusholjon.
+4. **Kérdés:** Mik a design-tokenek (brand, szín, tipográfia, layout)?
+   **Miért számít:** minden UI-munka ezt a szerződést követi; üres guideline = nyitott döntés.
+   **Válaszadó szerep:** ember (jóváhagy a design-kapunál), agent draftol v0/Claude Design útján.
+   **Addig tiltott feltételezés:** az agent nem talál ki színt/fontot a guideline nélkül.
 
-**Miért ez az első:** amíg nincs remote és első push, a CI-kapuk némák, nincs preview-lánc, és a README szabálya szerint feature-munka sem indulhat (az az elfogadott bootstrap-evidence-hez kötött). Ez a lépés old fel legtöbb továbbit, és tisztán emberi hatáskör (irreverzibilis, kifelé ható). A többi hiányzó információ (spec-csomag, design-tokenek, MCP-auth) ezután, sorban vehető fel.
+## Szerephatárok
+- **Modell (LLM):** szöveg/kód generálása — spec-fogalmazvány, diff-javaslat, elemzés. Nincs oldalhatás-felelőssége; nem dönt scope-ról és nem hagy jóvá. A kimenete javaslat, amíg az agent nem hajtja végre.
+- **Coding agent (harness + toolok/MCP):** végrehajtás a **jóváhagyott scope-on belül** — fájl olvasás/írás, parancsfuttatás (kapuk), MCP-hívások, PR nyitása; iterál a zöld kapukig. Nem lép a scope-on túl, nem módosít közös workshop-forrást, és emberi jóváhagyás nélkül nem tesz irreverzibilis/kifelé ható lépést.
+- **Ember:** szándék és üzleti döntés; spec elfogadása; jóváhagyás a kapuknál (bootstrap-evidence, design); scope engedélyezése; minden irreverzibilis/kifelé ható/költséges lépés végső engedélye (repó láthatóság, DB-provisioning, merge, fizetős szolgáltatás).
+- **Független ellenőrző (RUG / reviewer):** a maker agenttől elkülönült második nézőpont — a diffet, az evidence-t és a spec-megfelelést nézi, nem a szerzőét ismétli. Blokkolhat merge-öt; nem ő dönt üzleti szemantikáról, azt visszautalja az emberhez.
+
+## Következő emberi döntés
+A repó már létezik (public) és a kezdeti állapot fel van pusholva — a legkorábbi blokkoló emberi döntés innen a **KK-Regisztráció jóváhagyott spec-csomagjának elfogadása** (a WHAT rögzítése: 48h kizáró határ + duplikátum-védelem gépileg ellenőrizhető elfogadási kritériumokként). Ez a spec-kapu; a README szabálya szerint feature-munka csak elfogadott evidence után indulhat, így ez old fel minden további implementációs lépést. (Párhuzamosan, olcsó lépésként az agent ellenőrizheti a remote CI zöldjét és az MCP-auth állapotát — ezek nem emberi döntések, csak verifikációk.)
