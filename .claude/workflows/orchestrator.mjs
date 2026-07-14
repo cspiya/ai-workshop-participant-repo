@@ -61,6 +61,15 @@ const CONFIG = {
 
 const dryRun = !!(args && args.dryRun);
 
+// --- Evidence / escalation literals (pure constants — no Date/Math.random/FS) ---
+// The named human product owner who resolves every agent:needs-human escalation
+// (docs/agentic-operating-model.md §9 — only a human unblocks Blocked/Needs-human).
+const HUMAN_OWNER = "Csaba Piya (product owner)";
+// The git-linked production Vercel deploy. Pushing the merge commit to main triggers
+// an auto-deploy here; the specific deploy for a given SHA may still be building when
+// the integrator posts its Done evidence, so the comment notes that explicitly.
+const PROD_DEPLOY_URL = "https://ai-workshop-participant-repo-sand.vercel.app";
+
 // --- JSON Schemas for validated agent() returns ---
 // Picker now returns an ARRAY of up to MAX_MAKERS eligible tasks (or {none:true}).
 const PICKER_SCHEMA = {
@@ -274,7 +283,13 @@ function integratorPrompt(picked, branch, makerResult) {
     "4. Green gate → git push origin main, then delete the merged branch: git push origin --delete " +
       branch +
       ".",
-    `5. Via Linear MCP: set issue ${picked.identifier} workflow state to \"Done\" (team ${CONFIG.teamId}); remove the ${CONFIG.labels.inReview} and ${CONFIG.labels.changesRequested} labels if present; and post an evidence COMMENT containing the merge commit SHA, the four gate exit codes, and a link to docs/handoffs/${picked.identifier}.md.`,
+    `5. Via the Linear MCP (load mcp__linear__* with ToolSearch first, then use the create/save-comment tool): set issue ${picked.identifier} workflow state to \"Done\" (team ${CONFIG.teamId}) and remove the ${CONFIG.labels.inReview} and ${CONFIG.labels.changesRequested} labels if present.`,
+    `6. Then POST AN EVIDENCE COMMENT on ${picked.identifier} via the Linear MCP (this comment is REQUIRED, not optional — the Done transition is not complete without it). The comment MUST contain, each on its own line:`,
+    "     - Merge commit SHA on main: the exact merge commit SHA you created in step 2 (the commit now on origin/main).",
+    "     - Gate exit codes: the four exit codes captured in step 3, written as `typecheck=<n> lint=<n> test=<n> build=<n>` (all 0 for a Done issue).",
+    `     - Handoff: a link to docs/handoffs/${picked.identifier}.md (the maker's evidence trail).`,
+    `     - Production deploy: ${PROD_DEPLOY_URL} — the git-linked Vercel auto-deploys on push to main, so note that this specific deploy (for the merge commit above) MAY STILL BE BUILDING at comment time.`,
+    "   Do not omit any of the four fields; if the Vercel deploy URL for this exact commit is not yet resolvable, still include the production URL above and the 'may still be building' note.",
     "Return {\"result\":\"MERGED\"|\"CONFLICT\"|\"GATE_RED\", \"sha\":\"<merge commit>\", \"gates\":{...}, \"note\":\"<summary>\"}."
   ].join("\n");
 }
@@ -324,11 +339,26 @@ async function setLinearState({ issue, state, label, note }) {
   return res;
 }
 
+// Escalate a task to a human. EVERY terminal escalation path routes through here
+// (NOT_DEVELOPABLE, review bounce-limit exceeded, maker-cannot-comply, agent
+// crash-after-RETRY, integration conflict/red-gate exceeding the bounce limit), so
+// each one BOTH sets the agent:needs-human label AND posts a Linear comment that
+// states the EXACT blocking reason / the reviewer's Critical+Serious findings (or
+// the crash/conflict reason) passed in via `note`, and NAMES the human owner who
+// must resolve it. The label alone is not enough — the comment is the audit trail.
 async function escalate(item, note) {
+  const comment = [
+    `ESCALATION — ${item.id} is BLOCKED and needs a human decision.`,
+    "",
+    "Blocking reason / findings:",
+    note,
+    "",
+    `Owner: ${HUMAN_OWNER}. This issue now carries label ${CONFIG.labels.needsHuman}; per docs/agentic-operating-model.md §9 only a human resolves a Blocked/Needs-human task — the orchestrator will not re-pick it.`
+  ].join("\n");
   await setLinearState({
     issue: item.task,
     label: CONFIG.labels.needsHuman,
-    note
+    note: comment
   });
 }
 
