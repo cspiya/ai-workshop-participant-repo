@@ -83,3 +83,15 @@ export const contactUpdateSchema = z.object(contactBaseShape);
 
 export type ContactCreateInput = z.infer<typeof contactCreateSchema>;
 export type ContactUpdateInput = z.infer<typeof contactUpdateSchema>;
+
+// Company validation (spec §5.1, §11): name required; website must be a valid
+// URL if provided; industry/notes optional. Create and update share the same
+// shape, so one schema serves both.
+export const companySchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  website: z.preprocess(emptyToNull, z.url("Invalid website URL").nullable()),
+  industry: optionalText,
+  notes: optionalText,
+});
+
+export type CompanyInput = z.infer<typeof companySchema>;
