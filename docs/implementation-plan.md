@@ -28,7 +28,7 @@ kötött egység. A sorrend a spec §20 prioritását követi.
 ## Fázisok
 
 ### F0 — Előfeltételek (ember + agent, kód még nincs)
-- Vercel-projekt bekötése a repóhoz (git-linkelt import → PR-preview). *(nyitott emberi döntés)*
+- Vercel-projekt bekötése a repóhoz (git-linkelt import). Pre-production alatt a `main`-re push ad automata deployt; production után a PR-ek is preview-t kapnak.
 - `DATABASE_URL` a `.env`-be (Neon connection string; gitignore-olt).
 - **Kimenet:** deploy-lánc kész, secret a helyén. **Kapu:** ember jóváhagyja a bootstrap-evidenciát.
 
@@ -70,13 +70,21 @@ kötött egység. A sorrend a spec §20 prioritását követi.
 
 ## Folyamat egy szeleten belül (a workshop operating modellje)
 
+> **Pre-production politika (AGENTS.md 8. szabály):** amíg nincs production
+> deploy, minden szelet **közvetlenül a `main`-re** kerül, és a lokális kapuk
+> zöldre futása után automatikusan push — nincs PR, nincs review-gate. A kapu a
+> védőháló. Ez a lazítás az első production deploynál (F6) megszűnik, onnantól
+> visszaáll a branch → PR → preview → review → merge folyamat.
+
+**Pre-production (F1–F5):**
 1. **Spec-kapu** — a szelet acceptance kritériumát az emberrel egyeztetve rögzítjük (issue = spec).
 2. **Design** (ahol UI van) — DESIGN-GUIDELINE tokenek alapján, v0/Claude Design; ember jóváhagy.
 3. **Implementálás** — maker agent a jóváhagyott scope-on belül; Zod-validáció, Server Actions.
-4. **Kapuk** — typecheck/lint/test/build lokálisan zöld, majd CI a remote-on.
-5. **Preview** — Neon DB-branch + Vercel preview URL a PR-en; élő ellenőrzés.
-6. **Független review (RUG)** — külön nézőpont a diffre és az evidenciára; blokkolhat merge-öt.
-7. **Merge** — ember hagyja jóvá; a slice működő vertikális szeletként landol.
+4. **Kapuk** — `typecheck && lint && test && build` lokálisan zöld.
+5. **Push `main`-re** — automatikusan; CI újrafuttatja a kapukat, a git-linkelt Vercel új deployt ad.
+
+**Production után (F6-tól):** a fenti 4. lépés után branch → PR → Vercel preview →
+független review (RUG, blokkolhat) → ember merge, hogy a `main` mindig kiadható maradjon.
 
 ## Sorrend és függőségek
 

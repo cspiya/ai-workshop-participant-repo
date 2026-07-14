@@ -68,8 +68,16 @@ change is a human decision recorded here.
 6. Data-layer rules: validate every mutation input with the entity's Zod schema
    before touching the DB; enum values (ContactStatus, InteractionType) come
    from the spec (§5.2, §5.3) — never invent new ones.
-7. One slice ⇒ one PR ⇒ one Linear issue. A slice is done only when its spec
-   acceptance criteria are demonstrably met and the gates are green.
+7. One slice ⇒ one Linear issue. A slice is done only when its spec acceptance
+   criteria are demonstrably met and the gates are green.
+8. **Pre-production delivery flow:** while there is no production deployment
+   yet, implement each issue directly on `main` and push automatically once the
+   full gate passes locally — no PR, no review gate. The gate is the guardrail:
+   never push if `npm run typecheck && npm run lint && npm run test && npm run
+   build` is not green. CI re-runs the same gate on `main` after each push.
+   This relaxation ends when the app first goes to production (issue F6): from
+   that point switch back to the branch → PR → preview → review → merge flow so
+   `main` stays releasable.
 
 > This file grows during the workshop — every recurring correction you give
 > the agent belongs here as a rule.
